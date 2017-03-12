@@ -58,7 +58,7 @@ gui = do
    main_panel <- panel main_window []
    main_split <- splitterWindow main_panel []
    -- Setup OpenGL canvas
-   opengl_canvas <- glCanvasCreateEx main_split 0 (Rect 0 0 800 600) 0 "GLCanvas" [GL_RGBA] nullPalette
+   opengl_canvas <- glCanvasCreateEx main_split 0 (Rect 0 0 800 600) 0 "GLCanvas" [GL_RGBA, GL_CORE_PROFILE, GL_MAJOR_VERSION 4, GL_MINOR_VERSION 3] nullPalette
    opengl_context <- glContextCreateFromNull opengl_canvas
    state <- initCanvasData
    glContextSetCurrent opengl_context opengl_canvas
@@ -162,6 +162,7 @@ makeProgram shaders attributes = do
     p <- createProgram
     mapM_ (attachShader p) shaders
     mapM_ (\(name, loc) -> attribLocation p name $= loc) attributes
+    bindFragDataLocation p "outColor" $= 0
     linkProgram p
     p'Ok <- SV.get $ linkStatus p
     validateProgram p

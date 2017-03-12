@@ -39,7 +39,7 @@ packages:
 - '.'
 - location:
     git: git@github.com:michael-swan/wxHaskell.git
-    commit: 641fa48423bf9ad16ea990c2c3e6dd4f4cae2451
+    commit: 77b1dc61adbf74b21c57ef100a0c61b8dafdbe86
   extra-dep: true
   subdirs:
   - wx
