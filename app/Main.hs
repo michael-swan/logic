@@ -1,8 +1,4 @@
 {-# LANGUAGE TypeFamilies #-}
-{-
-  Demos multiple OpenGL canvas's
-  Sample contributed by Patrick Scheibe
--}
 module Main
 where
 
@@ -98,7 +94,7 @@ gui = do
 newTexture :: IO TextureObject
 newTexture = do
   let opts = RasterificOptions $ mkSizeSpec (V2 (Just 100.0) (Just 100.0) :: V2 (Maybe Double))
-  let Image w h d = CD.renderDia Rasterific opts example
+  let Image w h d = CD.renderDia Rasterific opts ex
   texObj <- genObjectName :: IO TextureObject
   activeTexture $= TextureUnit 0
   textureBinding Texture2D $= Just texObj
@@ -106,6 +102,7 @@ newTexture = do
     texImage2D Texture2D NoProxy 0 RGBA'	(TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
   return texObj
   where
+    ex = atPoints (trailVertices $ regPoly 6 1) (repeat (circle 0.2 # fc green))
     hilbert 0 = mempty
     hilbert n = hilbert' (n-1) # reflectY <> D.vrule 1
              <> hilbert  (n-1) <> D.hrule 1
@@ -241,165 +238,3 @@ reshape size@(GL.Size w h) = do
    GL.ortho (-w') w' (-h') h' (-1.0) 1.0
    GL.matrixMode GL.$= GL.Modelview 0
    GL.loadIdentity
-
-  --shaderSourceBS vs $= vs_source
-  --shaderSourceBS fs $= fs_source
-  --compileShader vs
-  --compileShader fs
-  {-p <- createProgram
-  attachShader p vs
-  attachShader p fs
-  bindFragDataLocation p "outColor" $= 0
-  linkProgram p --}
-
-{-display :: Canvas ()
-display = do
-  let color3f r g b = GL.color $ Color3 r g (b :: GLfloat)
-      vertex3f x y z = vertex $ Vertex3 x y (z :: GLfloat)
-  liftIO $ clear [ColorBuffer]
-  liftIO $ renderPrimitive Quads $ do
-    color3f 1 0 0
-    vertex3f 0 0 0
-    vertex3f 0 50 0
-    vertex3f 50 50 0
-    vertex3f 50 0 0
-
-    color3f 0 1 0
-    vertex3f 0 0 0
-    vertex3f 0 (-50) 0
-    vertex3f 50 (-50) 0
-    vertex3f 50 0 0
-
-    color3f 0 0 1
-    vertex3f 0 0 0
-    vertex3f 0 (-50) 0
-    vertex3f (-50) (-50) 0
-    vertex3f (-50) 0 0
-
-    color3f 1 0 1
-    vertex3f 0 0 0
-    vertex3f 0 50 0
-    vertex3f (-50) 50 0
-    vertex3f (-50) 0 0
-  liftIO $ flush-}
-
-{-createShaderBuffers :: BS.ByteString -> BS.ByteString -> IO (VertexArrayObject, BufferObject, BufferObject)
-createShaderBuffers vertex_buffer element_buffer = do
-  -- Vertex Array Object
-  vao <- genObjectName
-  bindVertexArrayObject $= Just vao
-  -- Vertex Buffer Object
-  vbo <- genObjectName
-  vertexAttribArray (AttribLocation 1) $= Enabled
-  bindBuffer ArrayBuffer $= Just vbo
-  BS.useAsCString vertex_buffer $ \ptr ->
-    bufferData ArrayBuffer $= (fromIntegral $ BS.length vertex_buffer, ptr, StaticDraw)
-  vertexAttribPointer (AttribLocation 1) $= (ToFloat, VertexArrayDescriptor 2 Float 0 nullPtr)
-  -- Element Buffer Object
-  ebo <- genObjectName
-  --bindBuffer ElementArrayBuffer $= Just ebo
-  --BS.useAsCString element_buffer $ \ptr ->
-  --  bufferData ElementArrayBuffer $= (fromIntegral $ BS.length element_buffer, ptr, StaticDraw)
-  return (vao, vbo, ebo) -}
-
-
-   --print =<< SV.get errors
-   --
-   --print =<< SV.get errors
-   --putStrLn =<< SV.get (programInfoLog shader_program)
-   -- pos <- SV.get $ attribLocation shader_program "position"
-   -- print =<< SV.get errors
-   -- vertexAttribArray pos $= Enabled
-   --print =<< SV.get errors
-   {-color <- SV.get $ attribLocation shader_program "color"
-   print =<< SV.get errors
-   vertexAttribArray color $= Enabled
-   print =<< SV.get errors
-   vertexAttribPointer color $= (ToFloat, VertexArrayDescriptor 3 Float (7*4) $ intPtrToPtr $ fromIntegral $ 2*4)
-   print =<< SV.get errors
-   tex <- SV.get $ attribLocation shader_program "texcoord"
-   vertexAttribArray tex $= Enabled
-   vertexAttribPointer tex $= (ToFloat, VertexArrayDescriptor 2 Float (7*4) $ intPtrToPtr $ fromIntegral $ 5*4)
-   tex <- newTexture $ uintToBytes [1..(100*100)]-- BS.pack $ concat $ map (\w -> [fromIntegral (w .&. 0xFF) :: Word8, fromIntegral ((w .&. 0xFF00) `shiftR` 8), fromIntegral ((w .&. 0xFF0000) `shiftR` 16), fromIntegral ((w .&. 0xFF000000) `shiftR` 24)]) ([1..(400*400)] :: [Word32])
-   textureWrapMode Texture2D S $= (Repeated, ClampToEdge)
-   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
-   textureFilter Texture2D $= ((Linear', Nothing), Linear') -}
-
-{-display = do
-   GL.clear [ GL.ColorBuffer, GL.DepthBuffer ]
-   GL.preservingMatrix $ do
-     GL.rotate (85 :: GL.GLfloat) (GL.Vector3 1 1 1)
-     evalMesh2 Fill (0, 20) (0, 20)
-   GL.flush -}
-
-{-
-
-ctrlPoints :: [[GL.Vertex3 GL.GLfloat]]
-ctrlPoints = [
-   [ GL.Vertex3 (-1.5) (-1.5)   4.0,  GL.Vertex3 (-0.5) (-1.5)   2.0,
-     GL.Vertex3   0.5  (-1.5) (-1.0), GL.Vertex3   1.5  (-1.5)   2.0 ],
-   [ GL.Vertex3 (-1.5) (-0.5)   1.0,  GL.Vertex3 (-0.5) (-0.5)   3.0,
-     GL.Vertex3   0.5  (-0.5)   0.0,  GL.Vertex3   1.5  (-0.5) (-1.0) ],
-   [ GL.Vertex3 (-1.5)   0.5    4.0,  GL.Vertex3 (-0.5)   0.5    0.0,
-     GL.Vertex3   0.5    0.5    3.0,  GL.Vertex3   1.5    0.5    4.0 ],
-   [ GL.Vertex3 (-1.5)   1.5  (-2.0), GL.Vertex3 (-0.5)   1.5  (-2.0),
-     GL.Vertex3   0.5    1.5    0.0,  GL.Vertex3   1.5    1.5  (-1.0) ]]
-
-myInit :: IO ()
-myInit = do
---   GL.clearColor GL.$= GL.Color4 1 0 0 0
-   GL.depthFunc GL.$= Just GL.Less
-   m <- GL.newMap2 (0, 1) (0, 1) (transpose ctrlPoints)
-   GL.map2 GL.$= Just (m :: GLmap2 GL.Vertex3 GL.GLfloat)
-   GL.autoNormal GL.$= GL.Enabled
-   mapGrid2 GL.$= ((20, (0, 1)), (20, (0, 1 :: GL.GLfloat)))
-   initlights  -- for lighted version only
-
-initlights :: IO ()
-initlights = do
-   GL.lighting GL.$= GL.Enabled
-   GL.light (GL.Light 0) GL.$= GL.Enabled
-
-   GL.ambient  (GL.Light 0) GL.$= GL.Color4 0.2 0.2 0.2 1.0
-   GL.position (GL.Light 0) GL.$= GL.Vertex4 0 0 2 1
-
-   GL.materialDiffuse   GL.Front GL.$= GL.Color4 0.6 0.6 0.6 1.0
-   GL.materialSpecular  GL.Front GL.$= GL.Color4 1.0 1.0 1.0 1.0
-   GL.materialShininess GL.Front GL.$= 50
-
-
-module Main where
-import Graphics.UI.WX
-import Graphics.UI.WXCore
-
-main :: IO ()
-main = do
-  start hello
-  let x = Just 1 :: Maybe Int
-  putStrLn "Help"
-  putStrLn "asdf"
-
-hello :: IO ()
-hello = do
-  f <- frame    [text := "Hello!"]
-  m <- menuPane [text := "&File"]
-  mclose <- menuItem m [text := "&Close\tCtrl+C", help := "Close the document"]
-  quit <- button f [text := "Quit", on command := close f]
-  field <- statusField [statusWidth := 50, text := "Hello"]
-  set f [menuBar := [m], statusBar := [field], layout := margin 10 $ widget quit]
-
-  #version 430 core
-  in vec2 position;
-  void main()
-  {
-      gl_Position = vec4(position, 0.0, 1.0);
-  }
-
-  #version 430 core
-  out vec4 outColor;
-  void main()
-  {
-      outColor = vec4(0.0, 0.0, 1.0, 1.0);
-  }
-
--}
