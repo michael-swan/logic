@@ -38,6 +38,10 @@ executable logic-exe
                      , JuicyPixels
                      , vector
                      , GLUtil
+                     , diagrams-core
+                     , diagrams-contrib
+                     , diagrams-lib
+                     , diagrams-rasterific
   default-language:    Haskell2010
 
 source-repository head

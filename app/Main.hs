@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 {-
   Demos multiple OpenGL canvas's
   Sample contributed by Patrick Scheibe
@@ -5,8 +6,8 @@
 module Main
 where
 
-import Graphics.UI.WX
-import Graphics.UI.WXCore
+import Graphics.UI.WX hiding ((#))
+import Graphics.UI.WXCore hiding ((#))
 import Graphics.Rendering.OpenGL
 import Control.Monad.IO.Class
 import qualified Graphics.UI.WX as WX
@@ -39,6 +40,15 @@ import Foreign.Marshal.Array
 import Foreign.Storable
 import Foreign.Ptr
 import Graphics.GLUtil.Shaders
+import Diagrams.Backend.Rasterific as R
+import Diagrams.Size
+import Diagrams.TwoD.Types
+import Diagrams.Prelude ((#), strokeT, medium, lw, lc, darkred, rotateBy, Diagram, (<>), reflectX, reflectY)
+import qualified Diagrams.Prelude as D
+import Diagrams.Core.Points
+import qualified Diagrams.Core.Compile as CD
+
+type Dia = Diagram B
 
 -- import Graphics.Rendering.OpenGL
 
@@ -87,16 +97,26 @@ gui = do
 
 newTexture :: IO TextureObject
 newTexture = do
-  ImageRGBA8 (Image w h d) <- either error id . decodePng <$> BS.readFile "/home/mswan/proj/logic/sample.png"
+  let opts = RasterificOptions $ mkSizeSpec (V2 (Just 100.0) (Just 100.0) :: V2 (Maybe Double))
+  let Image w h d = CD.renderDia Rasterific opts example
   texObj <- genObjectName :: IO TextureObject
   activeTexture $= TextureUnit 0
   textureBinding Texture2D $= Just texObj
   unsafeWith d $ \ptr ->
     texImage2D Texture2D NoProxy 0 RGBA'	(TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
-  -- BS.useAsCString bs $ \ptr ->
-  --   texImage2D Texture2D NoProxy 0 RGB'	(TextureSize2D 100 100) 0 $ PixelData RGB UnsignedByte ptr
   return texObj
+  where
+    hilbert 0 = mempty
+    hilbert n = hilbert' (n-1) # reflectY <> D.vrule 1
+             <> hilbert  (n-1) <> D.hrule 1
+             <> hilbert  (n-1) <> D.vrule (-1)
+             <> hilbert' (n-1) # reflectX
+      where
+        hilbert' m = hilbert m # rotateBy (1/4)
 
+    example :: Dia
+    example = D.frame 1 . lw medium . lc darkred
+                      . strokeT $ hilbert 5
 
 floatsToBytes :: [Float] -> BS.ByteString
 floatsToBytes = BSL.toStrict . runPut . mapM_ put
@@ -199,9 +219,6 @@ canvasPaint canvas_state canvas context shader_program vao transform_uniform _ (
      off <- getDisplayOffset
      let diff_x = 2 * fromIntegral (pointX off + pointX x - pointX y)
          diff_y = 2 * fromIntegral (pointY off + pointY y - pointY x)
-     liftIO $ print (diff_x, diff_y)
-     liftIO $ translate $ Vector3 diff_x diff_y (0 :: GLfloat)
-     -- let identity_matrix = [1, 0, 0, diff_x, 0, 1, 0, diff_y, 0, 0, 1, 0, 0, 0, 0, 1] :: [GLfloat]
      let ortho_matrix = [1 / fromIntegral w, 0, 0, diff_x / fromIntegral w, 0, 1 / fromIntegral h, 0, diff_y / fromIntegral h, 0, 0, 1, 0, 0, 0, 0, 1] :: [GLfloat]
      mat <- liftIO $ newMatrix ColumnMajor ortho_matrix
      uniformGLMat4 transform_uniform $= mat
