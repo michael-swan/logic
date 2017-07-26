@@ -1,9 +1,8 @@
 {-# LANGUAGE TypeFamilies #-}
-module Main
-where
+module Main where
 
-import Graphics.UI.WX hiding ((#))
-import Graphics.UI.WXCore hiding ((#))
+import Graphics.UI.WX hiding ((#), JoinMiter)
+import Graphics.UI.WXCore hiding ((#), JoinMiter, Image)
 import Graphics.Rendering.OpenGL
 import Control.Monad.IO.Class
 import qualified Graphics.UI.WX as WX
@@ -21,14 +20,13 @@ import GHC.Ptr
 import Canvas.Monad
 import Canvas.Event
 import Data.Bits
+import System.Environment
 import Graphics.Rendering.OpenGL.GL.Shaders.ProgramObjects
 import Graphics.Rendering.OpenGL.GL.Shaders.ShaderObjects
 import Data.Binary
 import Data.Binary.Put hiding (flush)
 import qualified Data.StateVar as SV
 import Data.Vector.Storable (unsafeWith)
-import Codec.Picture.Png
-import Codec.Picture.Types
 import Graphics.Rendering.OpenGL.GLU.Errors
 import Graphics.Rendering.OpenGL.GL.StringQueries
 import System.Exit
@@ -36,15 +34,15 @@ import Foreign.Marshal.Array
 import Foreign.Storable
 import Foreign.Ptr
 import Graphics.GLUtil.Shaders
-import Diagrams.Backend.Rasterific as R
-import Diagrams.Size
-import Diagrams.TwoD.Types
-import Diagrams.Prelude ((#), strokeT, medium, lw, lc, darkred, rotateBy, Diagram, (<>), reflectX, reflectY)
-import qualified Diagrams.Prelude as D
-import Diagrams.Core.Points
-import qualified Diagrams.Core.Compile as CD
+import Graphics.GL.Core43 (glEnable)
+import qualified Graphics.GL.Core43 as Raw
+import Graphics.Rasterific as R
+import Graphics.Rasterific.Texture
+import Codec.Picture ( writePng )
+import Codec.Picture.Types
+import Graphics.Text.TrueType (loadFontFile)
 
-type Dia = Diagram B
+-- type Dia = Diagram B
 
 -- import Graphics.Rendering.OpenGL
 
@@ -69,13 +67,18 @@ gui = do
    state <- initCanvasData
    glContextSetCurrent opengl_context opengl_canvas
    -- (vao, vbo, ebo)<- createShaderBuffers (floatsToBytes [0.0, 0.5, 0.5, -0.5, -0.5, -0.5]) (uintToBytes [0, 1, 2, 2, 3, 0])
-   vao <- createShaderBuffers
+   glEnable Raw.GL_BLEND
+   blendFunc $= (SrcAlpha, OneMinusSrcAlpha)
+   (vao, vao_lines) <- createShaderBuffers
    shader_program <- createShaderProgram
+   shader_program_lines <- createShaderProgramLines
    transform_uniform <- SV.get $ uniformLocation shader_program "transform"
+   transform_uniform_lines <- SV.get $ uniformLocation shader_program_lines "transform"
    let identity_matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] :: [GLfloat]
    mat <- newMatrix ColumnMajor identity_matrix
    uniformGLMat4 transform_uniform $= mat
-   WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program vao transform_uniform
+   uniformGLMat4 transform_uniform_lines $= mat
+   WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines
                         , on click       := runCanvas state . canvasClick
                         , on unclick     := runCanvas state . canvasUnclick
                         , on doubleClick := runCanvas state . canvasDoubleClick
@@ -84,36 +87,53 @@ gui = do
    quit <- button main_split [text := "Quit", on command := close main_window]
    WX.set main_window [menuBar := [menu_bar]
                       , statusBar := [status_bar]
-                      , layout := container main_panel $ fill $
+                      , layout := container main_panel $ WX.fill $
                                     vsplit main_split 4 100
                                       -- Left Panel
                                       (widget quit)
                                       -- Right Panel
                                       (floatBottomRight $ widget opengl_canvas) ]
 
+x = PixelRGB8 0 0 0
+
 newTexture :: IO TextureObject
 newTexture = do
-  let opts = RasterificOptions $ mkSizeSpec (V2 (Just 100.0) (Just 100.0) :: V2 (Maybe Double))
-  let Image w h d = CD.renderDia Rasterific opts ex
+  font <- either error id <$> loadFontFile "/home/mswan/dl/gohufont-14.ttf"
+  -- let ex = (D.topLeftText "Dinkle Donkle" # D.font "GohuFont" # D.fontSizeG 0.1) `D.atop` ((D.circle 1 # D.fc D.red # D.lw D.none # D.translate (D.r2 (1.0, 0.0)) # D.opacity 0.5 :: Dia) `D.atop` (D.circle 1 # D.fc D.lime # D.lw D.none :: Dia)) :: Dia
+  -- let opts = RasterificOptions $ mkSizeSpec (V2 (Just 512.0) (Just 512.0) :: V2 (Maybe Double))
+  -- let Image w h d = CD.renderDia Rasterific opts ex
+  let clear = PixelRGBA8 0 0 0 0
+  let white = PixelRGBA8 255 255 255 255
+  let blue = PixelRGBA8 0 0x86 0xc1 255
+  let black = PixelRGBA8 0 0 0 255
+  let drawing = withTexture (uniformTexture black) $ do
+        printTextAt font (PointSize 10.5) (V2 4 14) "Fuck yourself"
+        withTexture (uniformTexture blue) $ do
+            stroke 2 (JoinMiter 0) (CapStraight 0, CapStraight 0) $ rectangle (V2 1 1) 256 256
+            stroke 4 (JoinMiter 0) (CapStraight 0, CapStraight 0) $ R.polyline [V2 128 256, V2 128 300, V2 200 300, V2 200 350]
+  let Image w h d = renderDrawing 512 512 clear drawing
   texObj <- genObjectName :: IO TextureObject
   activeTexture $= TextureUnit 0
   textureBinding Texture2D $= Just texObj
-  unsafeWith d $ \ptr ->
+  unsafeWith d $ \ptr -> do
+    x <- peekByteOff ptr 0
+    print (x :: Word32)
     texImage2D Texture2D NoProxy 0 RGBA'	(TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
   return texObj
-  where
-    ex = atPoints (trailVertices $ regPoly 6 1) (repeat (circle 0.2 # fc green))
-    hilbert 0 = mempty
-    hilbert n = hilbert' (n-1) # reflectY <> D.vrule 1
-             <> hilbert  (n-1) <> D.hrule 1
-             <> hilbert  (n-1) <> D.vrule (-1)
-             <> hilbert' (n-1) # reflectX
-      where
-        hilbert' m = hilbert m # rotateBy (1/4)
+    -- ex :: Dia
+    -- D.atPoints (D.trailVertices $ D.regPoly 6 1) (repeat (D.circle 0.2 # D.fc D.green))
 
-    example :: Dia
-    example = D.frame 1 . lw medium . lc darkred
-                      . strokeT $ hilbert 5
+    -- hilbert 0 = mempty
+    -- hilbert n = hilbert' (n-1) # reflectY <> D.vrule 1
+    --          <> hilbert  (n-1) <> D.hrule 1
+    --          <> hilbert  (n-1) <> D.vrule (-1)
+    --          <> hilbert' (n-1) # reflectX
+    --   where
+    --     hilbert' m = hilbert m # rotateBy (1/4)
+
+    -- example :: Dia
+    -- example = D.frame 1 . lw medium . lc darkred
+    --                  . strokeT $ hilbert 5
 
 floatsToBytes :: [Float] -> BS.ByteString
 floatsToBytes = BSL.toStrict . runPut . mapM_ put
@@ -124,11 +144,12 @@ uintToBytes = BSL.toStrict . runPut . mapM_ putWord32le
 bufferOffset :: Integral a => a -> Ptr b
 bufferOffset = plusPtr nullPtr . fromIntegral
 
-createShaderBuffers :: IO VertexArrayObject
+createShaderBuffers :: IO (VertexArrayObject, VertexArrayObject)
 createShaderBuffers = do
-  triangle <- genObjectName
-  bindVertexArrayObject $= Just triangle
-  let c = 256
+  -- BOXES --
+  boxes <- genObjectName
+  bindVertexArrayObject $= Just boxes
+  let c = 512
   let vertices = [ Vertex2 (-c) ( c), Vertex2 (0.0) (0.0)
                  , Vertex2 ( c) ( c), Vertex2 (1.0) (0.0)
                  , Vertex2 ( c) (-c), Vertex2 (1.0) (1.0)
@@ -159,7 +180,27 @@ createShaderBuffers = do
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
   textureFilter Texture2D $= ((Linear', Nothing), Linear')
 
-  return triangle
+  -- LINES --
+  lines <- genObjectName
+  bindVertexArrayObject $= Just lines
+
+  arrayBuffer <- genObjectName
+  bindBuffer ArrayBuffer $= Just arrayBuffer
+
+  let vertices = [ Vertex2 50 50
+                 , Vertex2 50 100
+                 , Vertex2 100 100
+                 ] :: [Vertex2 GLfloat]
+  
+  withArray vertices $ \ptr -> do
+    let size = fromIntegral $ length vertices * sizeOf (head vertices)
+    bufferData ArrayBuffer $= (size, ptr, StaticDraw)
+
+  let pos = AttribLocation 0
+  vertexAttribPointer pos $= (ToFloat, VertexArrayDescriptor 2 Float 0 (bufferOffset 0))
+  vertexAttribArray pos $= Enabled
+
+  return (boxes, lines)
 
 makeShader :: ShaderType -> BS.ByteString -> IO Shader
 makeShader ty src = do
@@ -203,26 +244,49 @@ createShaderProgram = do
   currentProgram $= Just p
   return p
 
-canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> Program -> VertexArrayObject -> UniformLocation -> DC c -> WX.Rect -> [WX.Rect]-> IO ()
-canvasPaint canvas_state canvas context shader_program vao transform_uniform _ (WX.Rect _ _ w h) _ = do
+createShaderProgramLines :: IO Program
+createShaderProgramLines = do
+  vs_source <- BS.readFile "/home/mswan/proj/logic/shaders/line_vertex.glsl"
+  fs_source <- BS.readFile "/home/mswan/proj/logic/shaders/line_fragment.glsl"
+  vs <- makeShader VertexShader vs_source
+  fs <- makeShader FragmentShader fs_source
+  let pos = AttribLocation 0
+  p <- makeProgram [vs, fs] [("position", pos)]
+  currentProgram $= Just p
+  return p
+
+canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> Program -> Program -> VertexArrayObject -> VertexArrayObject -> UniformLocation -> UniformLocation -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
+canvasPaint canvas_state canvas context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines _ (WX.Rect _ _ w h) _ = do
    glContextSetCurrent context canvas
-   currentProgram $= Just shader_program
    reshape $ GL.Size (fromIntegral w) (fromIntegral h)
-   clearColor $= Color4 1 0 0 1
+   clearColor $= Color4 (0xf0/0xff) (0xf0/0xff) (0xf0/0xff) 1
    clear [ColorBuffer]
-   runCanvas canvas_state $ do
+   mat <- runCanvas canvas_state $ do
      x <- getMousePoint
      y <- getMouseClickPoint
      off <- getDisplayOffset
      let diff_x = 2 * fromIntegral (pointX off + pointX x - pointX y)
          diff_y = 2 * fromIntegral (pointY off + pointY y - pointY x)
-     let ortho_matrix = [1 / fromIntegral w, 0, 0, diff_x / fromIntegral w, 0, 1 / fromIntegral h, 0, diff_y / fromIntegral h, 0, 0, 1, 0, 0, 0, 0, 1] :: [GLfloat]
-     mat <- liftIO $ newMatrix ColumnMajor ortho_matrix
-     uniformGLMat4 transform_uniform $= mat
+         w' = fromIntegral w
+         h' = fromIntegral h
+     let ortho_matrix = [1/w',    0, 0, diff_x / w',
+                         0,    1/h', 0, diff_y / h',
+                         0, 0, 1, 0,
+                         0, 0, 0, 1] :: [GLfloat]
+     liftIO $ newMatrix ColumnMajor ortho_matrix
 
-
+   currentProgram $= Just shader_program
+   uniformGLMat4 transform_uniform $= mat
    bindVertexArrayObject $= Just vao
    drawElements Triangles 6 UnsignedInt nullPtr
+   bindVertexArrayObject $= Nothing
+   currentProgram $= Just shader_program_lines
+   uniformGLMat4 transform_uniform_lines $= mat
+   bindVertexArrayObject $= Just vao_lines
+   drawArrays LineStrip 0 3
+   -- drawElements LineStrip 3 UnsignedInt nullPtr
+   bindVertexArrayObject $= Nothing
+   -- print =<< SV.get errors
    -- drawArrays Triangles 0 6
    -- runCanvas canvas_state display
    glCanvasSwapBuffers canvas
