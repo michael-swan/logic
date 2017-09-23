@@ -43,9 +43,12 @@ import Codec.Picture.Types
 import Graphics.Text.TrueType (loadFontFile)
 import qualified Graphics.Text.TrueType as TT
 import Data.Bool
+import Data.List
 import Font
 import Graphics.Text.PCF
 import qualified Data.Vector.Storable as V
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 
 -- type Dia = Diagram B
 
@@ -104,99 +107,23 @@ x = PixelRGB8 0 0 0
 -- | Texture atlas of a monospaced font.
 data TextureAtlas = TextureAtlas { textureAtlasObject :: TextureObject
                                  -- ^ Texture object containing the font's rendered texture atlas
-                                 , textureAtlasWidth  :: Int
+                                 , textureAtlasMap :: Map Char (Int, Int)
+                                 -- ^ Map from character to its horizontal offset into our texture and its width
+                                 , textureAtlasWidth :: Int
                                  -- ^ Width of each character
                                  , textureAtlasHeight :: Int
                                  -- ^ Height of each character
                                  }
 
--- | Characters to fill every font texture atlas' with.
-textureAtlasChars :: String
-textureAtlasChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`~!@#$%^&*()_-+=[]{}\\|;:'\",.<>/? "
-
--- | Load a texture atlas containing only the essential characters of a monospaced TrueType font.
--- newTextureAtlas :: FilePath
---                 -- ^ Path to TrueType font
---                 -> Float
---                 -- ^ Point size to render font in
---                 -> IO (Either String TextureAtlas)
--- newTextureAtlas filepath point_size = do
---   either_font <- loadFontFile filepath
---   case either_font of
---     Left err ->
---       return $ Left err
---     Right font ->
---       case monospaceCharSize font point_size of
---         Nothing ->
---             return $ Left "Input font is not monospaced."
---         Just (char_width, char_height) -> do
---           let clear = PixelRGBA8 0 0 0 0
---               black = PixelRGBA8 0 0 0 255
---               Image w h d = renderDrawing 512 512 clear $
---                 withTexture (uniformTexture black) $ printTextAt font (PointSize point_size) (V2 0 0) textureAtlasChars
---           texture <- genObjectName -- :: IO TextureObject
---           activeTexture $= TextureUnit 0
---           textureBinding Texture2D $= Just texture
---           unsafeWith d $ \ptr ->
---             texImage2D Texture2D NoProxy 0 RGBA' (TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
---           return $ Right $ TextureAtlas texture char_width char_height
-
--- | Determine dimensions of characters contained in a monospaced font. 'Nothing' is returned for all non-monospaced fonts.
--- monospaceCharSize :: TT.Font
---                   -- ^ Input font
---                   -> Float
---                   -- ^ Point size in which to perform these measurements
---                   -> Maybe (Int, Int)
--- monospaceCharSize font point_size = bool (Just size) Nothing $ all (size ==) sizes
---     where
---         getCharSize c = let Image w h _ = renderDrawing (PixelRGBA8 0 0 0 0) $ printTextAt font (PointSize point_size) (V2 0 0) [c]
---                         in (w, h)
---         size:sizes = map getCharSize textureAtlasChars
---         -- ^ TODO: Determine if we really need to calculate the 'max' of the height, since monospace fonts may vary that dimension.
-    
-
-newTexture :: IO TextureObject
-newTexture = do
-  let PCFText _ w h vec_font = gohuFont
-  -- newTextureAtlas "/home/mswan/dl/gohufont-14.ttf" 10.5
-  -- font <- either error id <$> loadFontFile "/home/mswan/dl/gohufont-14.ttf"
-  -- let ex = (D.topLeftText "Dinkle Donkle" # D.font "GohuFont" # D.fontSizeG 0.1) `D.atop` ((D.circle 1 # D.fc D.red # D.lw D.none # D.translate (D.r2 (1.0, 0.0)) # D.opacity 0.5 :: Dia) `D.atop` (D.circle 1 # D.fc D.lime # D.lw D.none :: Dia)) :: Dia
-  -- let opts = RasterificOptions $ mkSizeSpec (V2 (Just 512.0) (Just 512.0) :: V2 (Maybe Double))
-  -- let Image w h d = CD.renderDia Rasterific opts ex
-  -- let clear = PixelRGBA8 0 0 0 0
-  -- let white = PixelRGBA8 255 255 255 255
-  -- let blue = PixelRGBA8 0 0x86 0xc1 255
-  -- let black = PixelRGBA8 0 0 0 255
-  -- let drawing = withTexture (uniformTexture black) $ do
-  --       printTextAt font (PointSize 10.5) (V2 4 14) "Some text"
-  --       withTexture (uniformTexture blue) $ do
-  --           stroke 2 (JoinMiter 0) (CapStraight 0, CapStraight 0) $ rectangle (V2 1 1) 256 256
-  --           stroke 4 (JoinMiter 0) (CapStraight 0, CapStraight 0) $ R.polyline [V2 128 256, V2 128 300, V2 200 300, V2 200 350]
-  -- let Image w h d = renderDrawing 512 512 clear drawing
-  print (w, h)
-  print (V.length vec_font, w * h)
-  texObj <- genObjectName :: IO TextureObject
+newTextureAtlas :: PCFText -> IO TextureAtlas -- (TextureObject, Map Char (Int, PCFGlyph)) -- TextureObject
+newTextureAtlas (PCFText gs w h font_img) = do
+  texObj <- genObjectName
   activeTexture $= TextureUnit 0
   textureBinding Texture2D $= Just texObj
-  putStrLn "A"
-  unsafeWith vec_font $ \ptr ->
+  unsafeWith font_img $ \ptr ->
     texImage2D Texture2D NoProxy 0 Luminance4Alpha4 (TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData Alpha UnsignedByte ptr
-  putStrLn "B"
-  return texObj
-    -- ex :: Dia
-    -- D.atPoints (D.trailVertices $ D.regPoly 6 1) (repeat (D.circle 0.2 # D.fc D.green))
-
-    -- hilbert 0 = mempty
-    -- hilbert n = hilbert' (n-1) # reflectY <> D.vrule 1
-    --          <> hilbert  (n-1) <> D.hrule 1
-    --          <> hilbert  (n-1) <> D.vrule (-1)
-    --          <> hilbert' (n-1) # reflectX
-    --   where
-    --     hilbert' m = hilbert m # rotateBy (1/4)
-
-    -- example :: Dia
-    -- example = D.frame 1 . lw medium . lc darkred
-    --                  . strokeT $ hilbert 5
+  let m = M.fromList $ snd $ foldl' (\(p, xs) g -> (p+glyph_width g, (glyph_char g, (p, glyph_width g)):xs)) (0, []) gs
+  return $ TextureAtlas texObj m w h
 
 floatsToBytes :: [Float] -> BS.ByteString
 floatsToBytes = BSL.toStrict . runPut . mapM_ put
@@ -238,7 +165,7 @@ createShaderBuffers = do
   let tex = AttribLocation 1
   vertexAttribPointer tex $= (ToFloat, VertexArrayDescriptor 2 Float (4*4) (bufferOffset 8))
   vertexAttribArray tex $= Enabled
-  atlas_obj <- newTexture
+  atlas_obj <- newTextureAtlas gohuFont
   putStrLn "After newTexture"
   textureWrapMode Texture2D S $= (Repeated, ClampToEdge)
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
