@@ -38,6 +38,12 @@ resolver: lts-8.5 # lts-7.11
 packages:
 - '.'
 - location:
+    git: git@github.com:michael-swan/pcf-font.git
+    commit: 46a57aa6f3679c29b6d5799ddbd3577036ad5801
+- location:
+    git: git@github.com:michael-swan/pcf-font-embed.git
+    commit: 6c6e3ab08ecf3d559ec2f501b9f47a815b6929cf
+- location:
     git: git@github.com:michael-swan/wxHaskell.git
     commit: 77b1dc61adbf74b21c57ef100a0c61b8dafdbe86
   extra-dep: true
