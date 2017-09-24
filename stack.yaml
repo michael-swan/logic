@@ -43,15 +43,6 @@ packages:
 - location:
     git: git@github.com:michael-swan/pcf-font-embed.git
     commit: 6c6e3ab08ecf3d559ec2f501b9f47a815b6929cf
-- location:
-    git: git@github.com:michael-swan/wxHaskell.git
-    commit: 77b1dc61adbf74b21c57ef100a0c61b8dafdbe86
-  extra-dep: true
-  subdirs:
-  - wx
-  - wxcore
-  - wxc
-  - wxdirect
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:

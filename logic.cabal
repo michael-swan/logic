@@ -21,18 +21,13 @@ executable logic
                      , wx
                      , wxcore
                      , OpenGL
-                     , timers
-                     , suspend
                      , mtl
                      , bytestring
                      , binary
                      , StateVar
                      , vector
                      , GLUtil
-                     , Rasterific
                      , OpenGLRaw
-                     , JuicyPixels
-                     , FontyFruity
                      , pcf-font
                      , pcf-font-embed
                      , template-haskell

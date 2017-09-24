@@ -8,51 +8,28 @@ import Control.Monad.IO.Class
 import qualified Graphics.UI.WX as WX
 import qualified Graphics.Rendering.OpenGL as GL
 import Control.Concurrent
-import Control.Concurrent.Timer
-import Control.Concurrent.Suspend.Lifted
-import System.IO.Unsafe
 import Control.Monad
-import Graphics.Rendering.OpenGL.GL.VertexSpec
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Word
 import GHC.Ptr
 import Canvas.Monad
 import Canvas.Event
-import Data.Bits
-import System.Environment
-import Graphics.Rendering.OpenGL.GL.Shaders.ProgramObjects
-import Graphics.Rendering.OpenGL.GL.Shaders.ShaderObjects
 import Data.Binary
 import Data.Binary.Put hiding (flush)
 import qualified Data.StateVar as SV
 import Data.Vector.Storable (unsafeWith)
-import Graphics.Rendering.OpenGL.GLU.Errors
-import Graphics.Rendering.OpenGL.GL.StringQueries
 import System.Exit
 import Foreign.Marshal.Array
 import Foreign.Storable
-import Foreign.Ptr
 import Graphics.GLUtil.Shaders
 import Graphics.GL.Core43 (glEnable)
 import qualified Graphics.GL.Core43 as Raw
-import Graphics.Rasterific as R
-import Graphics.Rasterific.Texture
-import Codec.Picture ( writePng )
-import Codec.Picture.Types
-import Graphics.Text.TrueType (loadFontFile)
-import qualified Graphics.Text.TrueType as TT
-import Data.Bool
 import Data.List
 import Font
 import Graphics.Text.PCF
-import qualified Data.Vector.Storable as V
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
-
--- type Dia = Diagram B
-
--- import Graphics.Rendering.OpenGL
 
 main :: IO ()
 main = start gui
@@ -101,8 +78,6 @@ gui = do
                                       (widget quit)
                                       -- Right Panel
                                       (floatBottomRight $ widget opengl_canvas) ]
-
-x = PixelRGB8 0 0 0
 
 -- | Texture atlas of a monospaced font.
 data TextureAtlas = TextureAtlas { textureAtlasObject :: TextureObject
