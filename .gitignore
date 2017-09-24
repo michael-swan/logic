@@ -31,3 +31,4 @@ Session.vim
 # Temporary
 .netrwhist
 *~
+deps/
