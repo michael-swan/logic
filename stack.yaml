@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-8.5 # lts-7.11
+resolver: lts-10.6 # lts-8.5 # lts-7.11
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -37,24 +37,29 @@ resolver: lts-8.5 # lts-7.11
 # will not be run. This is useful for tweaking upstream packages.
 packages:
 - '.'
+- '../pcf-font-embed'
 - location:
-    git: git@github.com:michael-swan/pcf-font.git
-    commit: 46a57aa6f3679c29b6d5799ddbd3577036ad5801
-- location:
-    git: git@github.com:michael-swan/pcf-font-embed.git
-    commit: 6c6e3ab08ecf3d559ec2f501b9f47a815b6929cf
+    git: git@github.com:michael-swan/wxHaskell.git
+    commit: 85dd108ce788067deca118e357e2f94623280a0a
+  extra-dep: true
+  subdirs:
+  - wx
+  - wxcore
+  - wxc
+  - wxdirect
+
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
-- wx-0.92.3.0
-- wxcore-0.92.3.0
-- wxc-0.92.3.0
-- wxdirect-0.92.3.0
+    # - wx-0.92.4.0
+    # - wxcore-0.92.4.0
+    # - wxc-0.92.4.0
+    # - wxdirect-0.92.4.0
 - timers-0.2.0.3
 - suspend-0.2.0.0
 - GPipe-2.1.8
-- GLUtil-0.9.1.1
-- hpp-0.4.0
+# - GLUtil-0.9.1.1
+# - hpp-0.4.0
 
 # Override default flag values for local packages and extra-deps
 flags: {}
@@ -79,3 +84,8 @@ extra-package-dbs: []
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
+
+allow-newer: true
+
+ghc-options:
+  "$everything": -ddump-stg -ddump-cmm

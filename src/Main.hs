@@ -1,4 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 module Main where
 
 import Graphics.UI.WX hiding ((#), JoinMiter)
@@ -19,10 +21,13 @@ import Data.Binary
 import Data.Binary.Put hiding (flush)
 import qualified Data.StateVar as SV
 import Data.Vector.Storable (unsafeWith)
+import qualified Data.Vector.Storable as V
 import System.Exit
+import System.Directory
+import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 import Foreign.Storable
-import Graphics.GLUtil.Shaders
+-- import Graphics.GLUtil.Shaders
 import Graphics.GL.Core43 (glEnable)
 import qualified Graphics.GL.Core43 as Raw
 import Data.List
@@ -30,6 +35,14 @@ import Font
 import Graphics.Text.PCF
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
+import Data.Bits
+import Data.Ratio
+import Data.Vector.Generic.Base
+import Data.Bool
+import Compiler.Hoopl
+import Canvas.Shader
+import Graphics.GL.Core32 hiding (GL_RGBA, GL_MAJOR_VERSION, GL_MINOR_VERSION)
+import Data.ByteString.Unsafe
 
 main :: IO ()
 main = start gui
@@ -40,7 +53,8 @@ gui = do
    main_window <- frame [ text := "Logic" ]
    -- Setup menu bar
    menu_bar <- menuPane [text := "&File"]
-   menu_close <- menuItem menu_bar [text := "&Close\tCtrl+C", help := "Close the document", on command := close main_window]
+   menu_settings <- menuItem menu_bar [text := "&Settings\tCtrl+E", help := "Configure program settings", on command := close main_window]
+   menu_close <- menuItem menu_bar [text := "&Close\tCtrl+Q", help := "Close the document", on command := proceedDialog main_window "Quit Application" "Are you sure you want to leave?" >>= bool (return ()) (close main_window)]
    -- Setup status bar
    status_bar <- statusField [statusWidth := 50, text := "Hello"]
    -- Setup main layout
@@ -55,27 +69,33 @@ gui = do
    glEnable Raw.GL_BLEND
    blendFunc $= (SrcAlpha, OneMinusSrcAlpha)
    (vao, vao_lines) <- createShaderBuffers
-   shader_program <- createShaderProgram
-   shader_program_lines <- createShaderProgramLines
-   transform_uniform <- SV.get $ uniformLocation shader_program "transform"
-   transform_uniform_lines <- SV.get $ uniformLocation shader_program_lines "transform"
+   Right (ShaderPrograms shader_program shader_program_lines) <- compileShaderPrograms
+   transform_uniform <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program
+   transform_uniform_lines <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_lines
    let identity_matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] :: [GLfloat]
-   mat <- newMatrix ColumnMajor identity_matrix
-   uniformGLMat4 transform_uniform $= mat
-   uniformGLMat4 transform_uniform_lines $= mat
+   -- mat <- newMatrix ColumnMajor identity_matrix
+   let mat = V.fromList [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+   unsafeWith mat $ \ptr -> do
+       glUniformMatrix4fv transform_uniform 1 GL_TRUE ptr
+       glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE ptr 
+   -- uniformGLMat4 transform_uniform $= mat
+   -- uniformGLMat4 transform_uniform_lines $= mat
    WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines
                         , on click       := runCanvas state . canvasClick
                         , on unclick     := runCanvas state . canvasUnclick
                         , on doubleClick := runCanvas state . canvasDoubleClick
                         , on drag        := runCanvas state . canvasDrag opengl_canvas ]
    -- Setup quit button (temporary)
-   quit <- button main_split [text := "Quit", on command := close main_window]
+   -- quit <- button main_split [text := "Quit", on command := close main_window]
+   list <- listView main_split ["Symbol", "Address"] (\(x, y) -> [x, show (y :: Int)]) -- [columns := [("Symbol", AlignLeft, 100)]]
+   listViewSetItems list [("sub_400000", 1234), ("main", 5678)]
+   WX.set (listViewCtrl list) [style := wxLC_VRULES .|. wxLC_HRULES .|. wxLC_REPORT]
    WX.set main_window [menuBar := [menu_bar]
                       , statusBar := [status_bar]
                       , layout := container main_panel $ WX.fill $
-                                    vsplit main_split 4 100
+                                    vsplit main_split 4 300
                                       -- Left Panel
-                                      (widget quit)
+                                      (widget $ listViewCtrl list) -- quit)
                                       -- Right Panel
                                       (floatBottomRight $ widget opengl_canvas) ]
 
@@ -91,13 +111,17 @@ data TextureAtlas = TextureAtlas { textureAtlasObject :: TextureObject
                                  }
 
 newTextureAtlas :: PCFText -> IO TextureAtlas -- (TextureObject, Map Char (Int, PCFGlyph)) -- TextureObject
-newTextureAtlas (PCFText gs w h font_img) = do
+newTextureAtlas !(PCFText gs w h !font_img) = do
   texObj <- genObjectName
   activeTexture $= TextureUnit 0
   textureBinding Texture2D $= Just texObj
-  unsafeWith font_img $ \ptr ->
-    texImage2D Texture2D NoProxy 0 Luminance4Alpha4 (TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData Alpha UnsignedByte ptr
+  unsafeWith (V.map (\px -> shiftL (fromIntegral px :: Word32) 24 .&. 0xFF000000) font_img) $ \ptr ->
+      texImage2D Texture2D NoProxy 0 RGBA' (TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
+  max_texture_size <- alloca $ \ptr -> do
+      Raw.glGetIntegerv Raw.GL_MAX_TEXTURE_SIZE ptr
+      peek ptr
   let m = M.fromList $ snd $ foldl' (\(p, xs) g -> (p+glyph_width g, (glyph_char g, (p, glyph_width g)):xs)) (0, []) gs
+  print =<< SV.get errors
   return $ TextureAtlas texObj m w h
 
 floatsToBytes :: [Float] -> BS.ByteString
@@ -114,11 +138,11 @@ createShaderBuffers = do
   -- BOXES --
   boxes <- genObjectName
   bindVertexArrayObject $= Just boxes
-  let (w,h) = (760, 14)
-  let vertices = [ Vertex2 (-w) ( h), Vertex2 (0.0) (0.0)
-                 , Vertex2 ( w) ( h), Vertex2 (1.0) (0.0)
-                 , Vertex2 ( w) (-h), Vertex2 (1.0) (1.0)
-                 , Vertex2 (-w) (-h), Vertex2 (0.0) (1.0)
+  let (w, h) = (760, 14)
+  let vertices = [ Vertex2 (-w-1.0) ( h-1.0), Vertex2 (0.0) (0.0)
+                 , Vertex2 ( w-1.0) ( h-1.0), Vertex2 (1.0) (0.0)
+                 , Vertex2 ( w-1.0) (-h-1.0), Vertex2 (1.0) (1.0)
+                 , Vertex2 (-w-1.0) (-h-1.0), Vertex2 (0.0) (1.0)
                  ] :: [Vertex2 GLfloat]
       elements = [Vertex3 0 1 2, Vertex3 2 3 0] :: [Vertex3 GLuint]
   arrayBuffer <- genObjectName
@@ -140,7 +164,7 @@ createShaderBuffers = do
   let tex = AttribLocation 1
   vertexAttribPointer tex $= (ToFloat, VertexArrayDescriptor 2 Float (4*4) (bufferOffset 8))
   vertexAttribArray tex $= Enabled
-  atlas_obj <- newTextureAtlas gohuFont
+  atlas_obj <- newTextureAtlas =<< gohuFont
   putStrLn "After newTexture"
   textureWrapMode Texture2D S $= (Repeated, ClampToEdge)
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
@@ -168,60 +192,7 @@ createShaderBuffers = do
 
   return (boxes, lines)
 
-makeShader :: ShaderType -> BS.ByteString -> IO Shader
-makeShader ty src = do
-    s <- createShader ty
-    shaderSourceBS s $= src
-    compileShader s
-    s'Ok <- SV.get $ compileStatus s
-    unless s'Ok $ do
-        slog <- SV.get $ shaderInfoLog s
-        putStrLn $ "Log:" ++ slog
-        exitFailure
-    print =<< SV.get errors
-    return s
-
-makeProgram :: [Shader] -> [(String, AttribLocation)] -> IO Program
-makeProgram shaders attributes = do
-    p <- createProgram
-    mapM_ (attachShader p) shaders
-    mapM_ (\(name, loc) -> attribLocation p name $= loc) attributes
-    bindFragDataLocation p "outColor" $= 0
-    linkProgram p
-    p'Ok <- SV.get $ linkStatus p
-    validateProgram p
-    status <- SV.get $ validateStatus p
-    unless (p'Ok && status) $ do
-        plog <- SV.get $ programInfoLog p
-        putStrLn plog
-        print =<< SV.get errors
-        exitFailure
-    return p
-
-createShaderProgram :: IO Program
-createShaderProgram = do
-  vs_source <- BS.readFile "/home/mswan/proj/logic/shaders/vertex.glsl"
-  fs_source <- BS.readFile "/home/mswan/proj/logic/shaders/fragment.glsl"
-  vs <- makeShader VertexShader vs_source
-  fs <- makeShader FragmentShader fs_source
-  let pos = AttribLocation 0
-      tex = AttribLocation 1
-  p <- makeProgram [vs, fs] [("position", pos), ("texcoord", tex)]
-  currentProgram $= Just p
-  return p
-
-createShaderProgramLines :: IO Program
-createShaderProgramLines = do
-  vs_source <- BS.readFile "/home/mswan/proj/logic/shaders/line_vertex.glsl"
-  fs_source <- BS.readFile "/home/mswan/proj/logic/shaders/line_fragment.glsl"
-  vs <- makeShader VertexShader vs_source
-  fs <- makeShader FragmentShader fs_source
-  let pos = AttribLocation 0
-  p <- makeProgram [vs, fs] [("position", pos)]
-  currentProgram $= Just p
-  return p
-
-canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> Program -> Program -> VertexArrayObject -> VertexArrayObject -> UniformLocation -> UniformLocation -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
+canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> GLuint -> GLuint -> VertexArrayObject -> VertexArrayObject -> GLint -> GLint -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
 canvasPaint canvas_state canvas context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines _ (WX.Rect _ _ w h) _ = do
    glContextSetCurrent context canvas
    reshape $ GL.Size (fromIntegral w) (fromIntegral h)
@@ -239,15 +210,21 @@ canvasPaint canvas_state canvas context shader_program shader_program_lines vao 
                          0,    1/h', 0, diff_y / h',
                          0, 0, 1, 0,
                          0, 0, 0, 1] :: [GLfloat]
-     liftIO $ newMatrix ColumnMajor ortho_matrix
+     return $ V.fromList ortho_matrix
+     -- liftIO $ newMatrix ColumnMajor ortho_matrix
 
-   currentProgram $= Just shader_program
-   uniformGLMat4 transform_uniform $= mat
+   -- currentProgram $= Just shader_program
+   unsafeWith mat $ glUniformMatrix4fv transform_uniform 1 GL_TRUE
+   glUseProgram shader_program
+   -- uniformGLMat4 transform_uniform $= mat
+   unsafeWith mat $ glUniformMatrix4fv transform_uniform 1 GL_TRUE
    bindVertexArrayObject $= Just vao
    drawElements Triangles 6 UnsignedInt nullPtr
    bindVertexArrayObject $= Nothing
-   currentProgram $= Just shader_program_lines
-   uniformGLMat4 transform_uniform_lines $= mat
+   -- currentProgram $= Just shader_program_lines
+   glUseProgram shader_program_lines
+   -- uniformGLMat4 transform_uniform_lines $= mat
+   unsafeWith mat $ glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE
    bindVertexArrayObject $= Just vao_lines
    drawArrays LineStrip 0 3
    -- drawElements LineStrip 3 UnsignedInt nullPtr
@@ -268,3 +245,8 @@ reshape size@(GL.Size w h) = do
    GL.ortho (-w') w' (-h') h' (-1.0) 1.0
    GL.matrixMode GL.$= GL.Modelview 0
    GL.loadIdentity
+
+-- |Set a uniform shader location with a 4x4 'GLmatrix'.
+uniformGLMat4 :: UniformLocation -> SettableStateVar (GLmatrix GLfloat)
+uniformGLMat4 (UniformLocation loc) = makeSettableStateVar aux
+  where aux m = withMatrix m $ \_ -> Raw.glUniformMatrix4fv loc 1 1
