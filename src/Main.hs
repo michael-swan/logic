@@ -10,7 +10,6 @@ import Control.Monad.IO.Class
 import qualified Graphics.UI.WX as WX
 import qualified Graphics.Rendering.OpenGL as GL
 import Control.Concurrent
-import Control.Monad
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Word
@@ -22,22 +21,17 @@ import Data.Binary.Put hiding (flush)
 import qualified Data.StateVar as SV
 import Data.Vector.Storable (unsafeWith)
 import qualified Data.Vector.Storable as V
-import System.Exit
 import System.Directory
 import Foreign.Marshal.Alloc
 import Foreign.Marshal.Array
 import Foreign.Storable
--- import Graphics.GLUtil.Shaders
-import Graphics.GL.Core43 (glEnable)
-import qualified Graphics.GL.Core43 as Raw
+-- import qualified Graphics.GL.Core43 as Raw
 import Data.List
 import Font
 import Graphics.Text.PCF
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Bits
-import Data.Ratio
-import Data.Vector.Generic.Base
 import Data.Bool
 import Compiler.Hoopl
 import Canvas.Shader
@@ -66,21 +60,18 @@ gui = do
    state <- initCanvasData
    glContextSetCurrent opengl_context opengl_canvas
    -- (vao, vbo, ebo)<- createShaderBuffers (floatsToBytes [0.0, 0.5, 0.5, -0.5, -0.5, -0.5]) (uintToBytes [0, 1, 2, 2, 3, 0])
-   glEnable Raw.GL_BLEND
-   blendFunc $= (SrcAlpha, OneMinusSrcAlpha)
+   glEnable GL_BLEND
+   -- blendFunc $= (SrcAlpha, OneMinusSrcAlpha)
+   glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
    (vao, vao_lines) <- createShaderBuffers
    Right (ShaderPrograms shader_program shader_program_lines) <- compileShaderPrograms
    transform_uniform <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program
    transform_uniform_lines <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_lines
-   let identity_matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] :: [GLfloat]
-   -- mat <- newMatrix ColumnMajor identity_matrix
-   let mat = V.fromList [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-   unsafeWith mat $ \ptr -> do
-       glUniformMatrix4fv transform_uniform 1 GL_TRUE ptr
-       glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE ptr 
-   -- uniformGLMat4 transform_uniform $= mat
-   -- uniformGLMat4 transform_uniform_lines $= mat
-   WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines
+   orthoMatrix <- newArray [ 1, 0, 0, 0
+                           , 0, 1, 0, 0
+                           , 0, 0, 1, 0
+                           , 0, 0, 0, 1 ]
+   WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines orthoMatrix
                         , on click       := runCanvas state . canvasClick
                         , on unclick     := runCanvas state . canvasUnclick
                         , on doubleClick := runCanvas state . canvasDoubleClick
@@ -115,10 +106,10 @@ newTextureAtlas !(PCFText gs w h !font_img) = do
   texObj <- genObjectName
   activeTexture $= TextureUnit 0
   textureBinding Texture2D $= Just texObj
-  unsafeWith (V.map (\px -> shiftL (fromIntegral px :: Word32) 24 .&. 0xFF000000) font_img) $ \ptr ->
+  unsafeWith (V.map (\px -> shiftL (fromIntegral px :: Word32) 24) font_img) $ \ptr ->
       texImage2D Texture2D NoProxy 0 RGBA' (TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
   max_texture_size <- alloca $ \ptr -> do
-      Raw.glGetIntegerv Raw.GL_MAX_TEXTURE_SIZE ptr
+      glGetIntegerv GL_MAX_TEXTURE_SIZE ptr
       peek ptr
   let m = M.fromList $ snd $ foldl' (\(p, xs) g -> (p+glyph_width g, (glyph_char g, (p, glyph_width g)):xs)) (0, []) gs
   print =<< SV.get errors
@@ -133,11 +124,17 @@ uintToBytes = BSL.toStrict . runPut . mapM_ putWord32le
 bufferOffset :: Integral a => a -> Ptr b
 bufferOffset = plusPtr nullPtr . fromIntegral
 
-createShaderBuffers :: IO (VertexArrayObject, VertexArrayObject)
+createShaderBuffers :: IO (GLuint, GLuint)
 createShaderBuffers = do
+  -- Allocate VAO's and BO's
+  [boxes, lines] <- allocaArray 2 $ \vaos -> do
+      glGenVertexArrays 2 vaos
+      peekArray 2 vaos
+  [arrayBuffer, ebo, arrayBuffer'] <- allocaArray 3 $ \buffers -> do
+    glGenBuffers 3 buffers
+    peekArray 3 buffers
   -- BOXES --
-  boxes <- genObjectName
-  bindVertexArrayObject $= Just boxes
+  glBindVertexArray boxes
   let (w, h) = (760, 14)
   let vertices = [ Vertex2 (-w-1.0) ( h-1.0), Vertex2 (0.0) (0.0)
                  , Vertex2 ( w-1.0) ( h-1.0), Vertex2 (1.0) (0.0)
@@ -145,14 +142,16 @@ createShaderBuffers = do
                  , Vertex2 (-w-1.0) (-h-1.0), Vertex2 (0.0) (1.0)
                  ] :: [Vertex2 GLfloat]
       elements = [Vertex3 0 1 2, Vertex3 2 3 0] :: [Vertex3 GLuint]
-  arrayBuffer <- genObjectName
-  bindBuffer ArrayBuffer $= Just arrayBuffer
+  -- arrayBuffer <- genObjectName
+  -- bindBuffer ArrayBuffer $= Just arrayBuffer
+  glBindBuffer GL_ARRAY_BUFFER arrayBuffer
   withArray vertices $ \ptr -> do
     let size = fromIntegral $ length vertices * sizeOf (head vertices)
     bufferData ArrayBuffer $= (size, ptr, StaticDraw)
 
-  ebo <- genObjectName
-  bindBuffer ElementArrayBuffer $= Just ebo
+  -- ebo <- genObjectName
+  -- bindBuffer ElementArrayBuffer $= Just ebo
+  glBindBuffer GL_ELEMENT_ARRAY_BUFFER ebo
   withArray elements $ \ptr -> do
     let size = fromIntegral $ length elements * sizeOf (head elements)
     bufferData ElementArrayBuffer $= (size, ptr, StaticDraw)
@@ -171,11 +170,13 @@ createShaderBuffers = do
   textureFilter Texture2D $= ((Linear', Nothing), Linear')
 
   -- LINES --
-  lines <- genObjectName
-  bindVertexArrayObject $= Just lines
+  -- lines <- genObjectName
+  -- bindVertexArrayObject $= Just lines
+  glBindVertexArray lines
 
-  arrayBuffer <- genObjectName
-  bindBuffer ArrayBuffer $= Just arrayBuffer
+  -- arrayBuffer <- genObjectName
+  -- bindBuffer ArrayBuffer $= Just arrayBuffer'
+  glBindBuffer GL_ARRAY_BUFFER arrayBuffer'
 
   let vertices = [ Vertex2 0 0
                  , Vertex2 50 100
@@ -192,13 +193,17 @@ createShaderBuffers = do
 
   return (boxes, lines)
 
-canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> GLuint -> GLuint -> VertexArrayObject -> VertexArrayObject -> GLint -> GLint -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
-canvasPaint canvas_state canvas context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines _ (WX.Rect _ _ w h) _ = do
+canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> GLuint -> GLuint -> GLuint -> GLuint -> GLint -> GLint -> Ptr GLfloat -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
+canvasPaint canvas_state canvas context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines orthoMatrix _ (WX.Rect _ _ w h) _ = do
    glContextSetCurrent context canvas
-   reshape $ GL.Size (fromIntegral w) (fromIntegral h)
-   clearColor $= Color4 (0xf0/0xff) (0xf0/0xff) (0xf0/0xff) 1
+   -- Adjust viewport size
+   glViewport 0 0 (fromIntegral w) (fromIntegral h)
+   -- Clear screen and fill with background color
+   let bg = 0xF0 / 0xFF
+   glClearColor bg bg bg 1
    clear [ColorBuffer]
-   mat <- runCanvas canvas_state $ do
+   -- Calculate orthographic projection matrix
+   runCanvas canvas_state $ do
      x <- getMousePoint
      y <- getMouseClickPoint
      off <- getDisplayOffset
@@ -206,47 +211,21 @@ canvasPaint canvas_state canvas context shader_program shader_program_lines vao 
          diff_y = 2 * fromIntegral (pointY off + pointY y - pointY x)
          w' = fromIntegral w
          h' = fromIntegral h
-     let ortho_matrix = [1/w',    0, 0, diff_x / w',
-                         0,    1/h', 0, diff_y / h',
-                         0, 0, 1, 0,
-                         0, 0, 0, 1] :: [GLfloat]
-     return $ V.fromList ortho_matrix
-     -- liftIO $ newMatrix ColumnMajor ortho_matrix
-
-   -- currentProgram $= Just shader_program
-   unsafeWith mat $ glUniformMatrix4fv transform_uniform 1 GL_TRUE
+     liftIO $ do
+         pokeElemOff orthoMatrix 0 (1 / w')
+         pokeElemOff orthoMatrix 3 (diff_x / w')
+         pokeElemOff orthoMatrix 5 (1 / h')
+         pokeElemOff orthoMatrix 7 (diff_y / h')
+   -- Render text
    glUseProgram shader_program
-   -- uniformGLMat4 transform_uniform $= mat
-   unsafeWith mat $ glUniformMatrix4fv transform_uniform 1 GL_TRUE
-   bindVertexArrayObject $= Just vao
+   glUniformMatrix4fv transform_uniform 1 GL_TRUE orthoMatrix
+   glBindVertexArray vao
    drawElements Triangles 6 UnsignedInt nullPtr
-   bindVertexArrayObject $= Nothing
-   -- currentProgram $= Just shader_program_lines
+   -- Render lines
    glUseProgram shader_program_lines
-   -- uniformGLMat4 transform_uniform_lines $= mat
-   unsafeWith mat $ glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE
-   bindVertexArrayObject $= Just vao_lines
+   glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE orthoMatrix
+   glBindVertexArray vao_lines
    drawArrays LineStrip 0 3
-   -- drawElements LineStrip 3 UnsignedInt nullPtr
-   bindVertexArrayObject $= Nothing
-   -- print =<< SV.get errors
-   -- drawArrays Triangles 0 6
-   -- runCanvas canvas_state display
+   -- Swap framebuffers
    glCanvasSwapBuffers canvas
    return ()
-
-reshape size@(GL.Size w h) = do
-   GL.viewport GL.$= (GL.Position 0 0, size)
-   GL.matrixMode GL.$= GL.Projection
-   GL.loadIdentity
-   --GL.ortho2D 0 (realToFrac w) (realToFrac h) 0
-   let w' = 2 * fromIntegral w
-       h' = 2 * fromIntegral h
-   GL.ortho (-w') w' (-h') h' (-1.0) 1.0
-   GL.matrixMode GL.$= GL.Modelview 0
-   GL.loadIdentity
-
--- |Set a uniform shader location with a 4x4 'GLmatrix'.
-uniformGLMat4 :: UniformLocation -> SettableStateVar (GLmatrix GLfloat)
-uniformGLMat4 (UniformLocation loc) = makeSettableStateVar aux
-  where aux m = withMatrix m $ \_ -> Raw.glUniformMatrix4fv loc 1 1
