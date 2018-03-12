@@ -4,7 +4,8 @@
 module Main where
 
 import Graphics.UI.WX hiding ((#), JoinMiter)
-import Graphics.UI.WXCore hiding ((#), JoinMiter, Image)
+import Graphics.UI.WXCore hiding ((#), JoinMiter, Image, GL_RGBA)
+import qualified Graphics.UI.WXCore as WXCore
 import Graphics.Rendering.OpenGL
 import Control.Monad.IO.Class
 import qualified Graphics.UI.WX as WX
@@ -35,7 +36,7 @@ import Data.Bits
 import Data.Bool
 import Compiler.Hoopl
 import Canvas.Shader
-import Graphics.GL.Core32 hiding (GL_RGBA, GL_MAJOR_VERSION, GL_MINOR_VERSION)
+import Graphics.GL.Core32 hiding (GL_MAJOR_VERSION, GL_MINOR_VERSION)
 import Data.ByteString.Unsafe
 
 main :: IO ()
@@ -56,7 +57,7 @@ main = start $ do
     listViewSetItems list [("sub_400000", 1234), ("main", 5678)]
     WX.set (listViewCtrl list) [style := wxLC_VRULES .|. wxLC_HRULES .|. wxLC_REPORT]
     -- Setup OpenGL canvas
-    opengl_canvas <- glCanvasCreateEx main_split 0 (Rect 0 0 800 600) 0 "GLCanvas" [GL_RGBA, GL_CORE_PROFILE, GL_MAJOR_VERSION 4, GL_MINOR_VERSION 3] nullPalette
+    opengl_canvas <- glCanvasCreateEx main_split 0 (Rect 0 0 800 600) 0 "GLCanvas" [WXCore.GL_RGBA, GL_CORE_PROFILE, GL_MAJOR_VERSION 4, GL_MINOR_VERSION 3] nullPalette
     opengl_context <- glContextCreateFromNull opengl_canvas
     glContextSetCurrent opengl_context opengl_canvas
     -- Initialize OpenGL vertex array objects (VAO's), buffer objects (BO's), uniforms, and shader programs
@@ -88,7 +89,7 @@ main = start $ do
                                        (floatBottomRight $ widget opengl_canvas) ]
 
 -- | Texture atlas of a monospaced font.
-data TextureAtlas = TextureAtlas { textureAtlasObject :: TextureObject
+data TextureAtlas = TextureAtlas { textureAtlasObject :: GLuint
                                  -- ^ Texture object containing the font's rendered texture atlas
                                  , textureAtlasMap :: Map Char (Int, Int)
                                  -- ^ Map from character to its horizontal offset into our texture and its width
@@ -100,17 +101,26 @@ data TextureAtlas = TextureAtlas { textureAtlasObject :: TextureObject
 
 newTextureAtlas :: PCFText -> IO TextureAtlas -- (TextureObject, Map Char (Int, PCFGlyph)) -- TextureObject
 newTextureAtlas !(PCFText gs w h !font_img) = do
-    texObj <- genObjectName
-    activeTexture $= TextureUnit 0
-    textureBinding Texture2D $= Just texObj
-    unsafeWith (V.map (\px -> shiftL (fromIntegral px :: Word32) 24) font_img) $ \ptr ->
-        texImage2D Texture2D NoProxy 0 RGBA' (TextureSize2D (fromIntegral w) (fromIntegral h)) 0 $ PixelData RGBA UnsignedByte ptr
-    max_texture_size <- alloca $ \ptr -> do
-        glGetIntegerv GL_MAX_TEXTURE_SIZE ptr
-        peek ptr
-    let m = M.fromList $ snd $ foldl' (\(p, xs) g -> (p+glyph_width g, (glyph_char g, (p, glyph_width g)):xs)) (0, []) gs
-    print =<< SV.get errors
-    return $ TextureAtlas texObj m w h
+    -- Allocate Texture Object
+    texture_object <- alloca $ \texture_object_ptr -> do
+        glGenTextures 1 texture_object_ptr
+        peek texture_object_ptr
+    -- Bind texture object to first texture slot
+    glActiveTexture GL_TEXTURE0
+    glBindTexture GL_TEXTURE_2D texture_object
+    -- Load texture data into OpenGL
+    unsafeWith (V.map (\px -> shiftL (fromIntegral px :: Word32) 24) font_img) $
+        glTexImage2D GL_TEXTURE_2D 0 GL_RGBA (fromIntegral w) (fromIntegral h) 0 GL_RGBA GL_UNSIGNED_BYTE . castPtr
+    -- Configure texture
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_REPEAT
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_REPEAT
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_CLAMP_TO_EDGE
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_CLAMP_TO_EDGE
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
+    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
+    -- Generate texture atlas map
+    let atlas_map = M.fromList $ snd $ foldl' (\(p, xs) g -> (p+glyph_width g, (glyph_char g, (p, glyph_width g)):xs)) (0, []) gs
+    return $ TextureAtlas texture_object atlas_map w h
 
 floatsToBytes :: [Float] -> BS.ByteString
 floatsToBytes = BSL.toStrict . runPut . mapM_ put
@@ -158,10 +168,6 @@ createShaderBuffers = do
     vertexAttribPointer tex $= (ToFloat, VertexArrayDescriptor 2 Float (4*4) (bufferOffset 8))
     vertexAttribArray tex $= Enabled
     atlas_obj <- newTextureAtlas =<< gohuFont
-    textureWrapMode Texture2D S $= (Repeated, ClampToEdge)
-    textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_NEAREST
-    glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
 
     -- LINES --
     glBindVertexArray lines

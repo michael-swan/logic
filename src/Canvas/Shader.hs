@@ -34,15 +34,12 @@ compileShaderProgram vs_source fs_source attrs = do
 
 makeShader :: GLenum -> ByteString -> ExceptT [String] IO GLuint
 makeShader shader_type shader_source = do
-    -- shader <- liftIO $ createShader shader_type
     shader <- glCreateShader shader_type
-    -- shaderSourceBS shader $= shader_source
     liftIO $ alloca $ \source_ptr -> alloca $ \length_ptr ->
         unsafeUseAsCString shader_source $ \source -> do
             poke length_ptr $ fromIntegral $ BS.length shader_source
             poke source_ptr source
             glShaderSource shader 1 source_ptr length_ptr
-    -- liftIO $ compileShader shader
     glCompileShader shader
     compile_status <- liftIO $ alloca $ \compile_status_ptr -> do
         glGetShaderiv shader GL_COMPILE_STATUS compile_status_ptr
@@ -56,12 +53,10 @@ makeShader shader_type shader_source = do
 
 makeProgram :: [GLuint] -> [(ByteString, GLuint)] -> ExceptT [String] IO GLuint
 makeProgram shaders attributes = do
-    -- program <- liftIO $ createProgram
     program <- glCreateProgram
     mapM_ (glAttachShader program) shaders
     liftIO $ do
         mapM_ (\(name, loc) -> unsafeUseAsCString name $ glBindAttribLocation program loc) attributes
-        -- bindFragDataLocation program "outColor" $= 0
         unsafeUseAsCString "outColor" $ glBindFragDataLocation program 0
     glLinkProgram program
     glValidateProgram program
