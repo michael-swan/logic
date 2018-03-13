@@ -3,7 +3,6 @@ module Canvas.Shader
     ( ShaderPrograms(..)
     , compileShaderPrograms ) where
 
-import Graphics.Rendering.OpenGL
 import Text.RawString.QQ
 import Data.ByteString (ByteString)
 import Data.ByteString.Unsafe
@@ -13,10 +12,12 @@ import Control.Monad.Trans.Except
 import Control.Monad.IO.Class
 import Data.StateVar
 import Graphics.GL.Core32
+import Graphics.GL.Types
 import Foreign.Ptr
 import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
+import GL
 
 data ShaderPrograms = ShaderPrograms { shader_default :: GLuint
                                      , shader_lines :: GLuint }
@@ -46,8 +47,8 @@ makeShader shader_type shader_source = do
         peek compile_status_ptr
     if compile_status == GL_FALSE then do
         shaderLog <- maybe [] (:[]) <$> getShaderInfoLog shader
-        shaderErrors <- get errors
-        throwE $ shaderLog ++ map show shaderErrors
+        shaderErrors <- getErrors
+        throwE $ shaderLog ++ map (("Error Code: " ++) . show) shaderErrors
     else
         return shader
 
@@ -68,15 +69,15 @@ makeProgram shaders attributes = do
         peek validate_status_ptr
     if link_status == 0 || validate_status == 0 then do
         programLog <- maybe [] (:[]) <$> getProgramInfoLog program
-        programErrors <- get errors
-        throwE $ programLog ++ map show programErrors
+        programErrors <- getErrors
+        throwE $ programLog ++ map (("Error Code: " ++) . show) programErrors
     else
         return program
 
 defaultVertexShader :: ByteString
 defaultVertexShader = [r|
 #version 300 es
-precision mediump float;
+precision highp float;
 in vec2 position;
 in vec2 texcoord;
 out vec2 Texcoord;
@@ -91,7 +92,7 @@ void main()
 defaultFragmentShader :: ByteString
 defaultFragmentShader = [r|
 #version 300 es
-precision mediump float;
+precision highp float;
 in vec2 Texcoord;
 out vec4 outColor;
 uniform sampler2D tex;
@@ -104,7 +105,7 @@ void main()
 lineVertexShader :: ByteString
 lineVertexShader = [r|
 #version 300 es
-precision mediump float;
+precision highp float;
 in vec2 position;
 uniform mat4 transform;
 void main()
@@ -116,11 +117,39 @@ void main()
 lineFragmentShader :: ByteString
 lineFragmentShader = [r|
 #version 300 es
-precision mediump float;
+precision highp float;
 out vec4 outColor;
 void main()
 {
     outColor = vec4(1.0, 0.0, 0.0, 1.0);
+}
+|]
+
+textVertexShader :: ByteString
+textVertexShader = [r|
+#version 300 es
+precision highp float;
+in vec2 position;
+in vec2 texcoord;
+out vec2 Texcoord;
+uniform mat4 transform;
+void main()
+{
+    Texcoord = texcoord;
+    gl_Position = transform * vec4(position, 0.0, 1.0);
+}
+|]
+
+textFragmentShader :: ByteString
+textFragmentShader = [r|
+#version 300 es
+precision highp float;
+in vec2 Texcoord;
+out vec4 outColor;
+uniform sampler2D tex;
+void main()
+{
+    outColor = texture(tex, Texcoord);
 }
 |]
 

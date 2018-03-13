@@ -20,12 +20,12 @@ executable logic
                      , Canvas.Monad
                      , Canvas.Shader
                      , Font
+                     , GL
   ghc-options:         -static -O2 -ddump-cmm -ddump-stg
   -- -ddump-asm
   build-depends:       base
                      , wx
                      , wxcore
-                     , OpenGL
                      , mtl
                      , bytestring
                      , binary
@@ -33,7 +33,6 @@ executable logic
                      , vector
                      , directory
                      , hoopl
-                     -- , OpenGLRaw
                      , pcf-font
                      , pcf-font-embed
                      , template-haskell
