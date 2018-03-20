@@ -20,12 +20,14 @@ import Foreign.C.String
 import GL
 
 data ShaderPrograms = ShaderPrograms { shader_default :: GLuint
-                                     , shader_lines :: GLuint }
+                                     , shader_lines :: GLuint
+                                     , shader_text :: GLuint }
 
 compileShaderPrograms :: IO (Either [String] ShaderPrograms)
 compileShaderPrograms = runExceptT $
     ShaderPrograms <$> compileShaderProgram defaultVertexShader defaultFragmentShader ["position", "texcoord"]
                    <*> compileShaderProgram lineVertexShader lineFragmentShader ["position", "texcoord"]
+                   <*> compileShaderProgram textVertexShader textFragmentShader ["ox", "y", "ax"]
 
 compileShaderProgram :: ByteString -> ByteString -> [ByteString] -> ExceptT [String] IO GLuint
 compileShaderProgram vs_source fs_source attrs = do
@@ -129,14 +131,19 @@ textVertexShader :: ByteString
 textVertexShader = [r|
 #version 300 es
 precision highp float;
-in vec2 position;
-in vec2 texcoord;
-out vec2 Texcoord;
+in float ox;
+in float y;
+in float ax;
+out float out_y;
+out float out_ax;
 uniform mat4 transform;
+uniform float atlas_height;
+uniform float atlas_width;
 void main()
 {
-    Texcoord = texcoord;
-    gl_Position = transform * vec4(position, 0.0, 1.0);
+    out_y = y / atlas_height;
+    out_ax = ax / atlas_width;
+    gl_Position = transform * vec4(ox, y, 0.0, 1.0);
 }
 |]
 
@@ -144,12 +151,13 @@ textFragmentShader :: ByteString
 textFragmentShader = [r|
 #version 300 es
 precision highp float;
-in vec2 Texcoord;
+in float y;
+in float ax;
 out vec4 outColor;
-uniform sampler2D tex;
+uniform sampler2D texture_atlas;
 void main()
 {
-    outColor = texture(tex, Texcoord);
+    outColor = texture(texture_atlas, vec2(ax, y));
 }
 |]
 

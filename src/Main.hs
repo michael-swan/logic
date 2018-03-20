@@ -37,6 +37,7 @@ import Canvas.Shader
 import Graphics.GL.Core32
 import Graphics.GL.Types
 import Data.ByteString.Unsafe
+import Data.Maybe
 
 main :: IO ()
 main = start $ do
@@ -61,7 +62,7 @@ main = start $ do
     glContextSetCurrent opengl_context opengl_canvas
     -- Initialize OpenGL vertex array objects (VAO's), buffer objects (BO's), uniforms, and shader programs
     (vao, vao_lines) <- createShaderBuffers
-    Right (ShaderPrograms shader_program shader_program_lines) <- compileShaderPrograms
+    Right (ShaderPrograms shader_program shader_program_lines shader_program_text) <- compileShaderPrograms
     transform_uniform <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program
     transform_uniform_lines <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_lines
     orthoMatrix <- newArray [ 1, 0, 0, 0
@@ -134,12 +135,12 @@ bufferOffset = plusPtr nullPtr . fromIntegral
 createShaderBuffers :: IO (GLuint, GLuint)
 createShaderBuffers = do
     -- Allocate VAO's and BO's
-    [boxes, lines] <- allocaArray 2 $ \vaos -> do
-        glGenVertexArrays 2 vaos
-        peekArray 2 vaos
-    [arrayBuffer, ebo, arrayBuffer'] <- allocaArray 3 $ \buffers -> do
-        glGenBuffers 3 buffers
-        peekArray 3 buffers
+    [boxes, text, lines] <- allocaArray 3 $ \vaos -> do
+        glGenVertexArrays 3 vaos
+        peekArray 3 vaos
+    [arrayBuffer, ebo, arrayBuffer', textArray] <- allocaArray 4 $ \buffers -> do
+        glGenBuffers 4 buffers
+        peekArray 4 buffers
     -- BOXES --
     glBindVertexArray boxes
     let (w, h) = (760, 14)
@@ -168,8 +169,15 @@ createShaderBuffers = do
     glVertexAttribPointer tex 2 GL_FLOAT GL_FALSE 16 $ bufferOffset 8
     glEnableVertexAttribArray tex
 
+    -- TEXT --
     atlas_obj <- newTextureAtlas =<< gohuFont
-    print $ textVertices atlas_obj "Fuck"
+    glBindVertexArray text
+    glBindBuffer GL_ARRAY_BUFFER textArray
+    bufferTextVertices atlas_obj "Fuck"
+
+    flip mapM [0, 1, 2] $ \i -> do
+        glVertexAttribPointer i 1 GL_FLOAT GL_FALSE 12 $ bufferOffset (i*4)
+        glEnableVertexAttribArray i
 
     -- LINES --
     glBindVertexArray lines
@@ -223,71 +231,48 @@ canvasPaint canvas_state canvas context shader_program shader_program_lines vao 
     liftIO $ glCanvasSwapBuffers canvas
     return ()
 
--- renderText :: GLuint -> String -> IO GLuint
--- renderText vao str = do
---     [boxes, lines] <- allocaArray 2 $ \vaos -> do
---         glGenVertexArrays 2 vaos
---         peekArray 2 vaos
---     [arrayBuffer, ebo, arrayBuffer'] <- allocaArray 3 $ \buffers -> do
---         glGenBuffers 3 buffers
---         peekArray 3 buffers
---     -- BOXES --
---     glBindVertexArray boxes
---     let (w, h) = (760, 14)
---     let (w', h') = (w/2, h/2)
---     let f Nothing = f $ Just $ textureAtlasMap atlas M.! '?'
---         f (Just (off, g)) =
---             [ [, 0, off / textureAtlasWidth g]
---             , ]
---             -- ^ Shader should divide offset by width of atlas to get tex_coord
---     let vertices = concatMap (f . M.lookup . textureAtlasMap atlas) str
---     let vertices = [ Vertex2 (-w'+0.25) ( h'+0.25), Vertex2 (0.0) (0.0)
---                    , Vertex2 ( w'+0.25) ( h'+0.25), Vertex2 (1.0) (0.0)
---                    , Vertex2 ( w'+0.25) (0+0.25), Vertex2 (1.0) (1.0)
---                    , Vertex2 (-w'+0.25) (0+0.25), Vertex2 (0.0) (1.0)
---                    ] :: [Vertex2 GLfloat]
---         elements = [Vertex3 0 1 2, Vertex3 2 3 0] :: [Vertex3 GLuint]
---     glBindBuffer GL_ARRAY_BUFFER arrayBuffer
---     withArray vertices $ \ptr -> do
---         let size = fromIntegral $ length vertices * sizeOf (head vertices)
---         bufferData ArrayBuffer $= (size, ptr, StaticDraw)
--- 
---     glBindBuffer GL_ELEMENT_ARRAY_BUFFER ebo
---     withArray elements $ \ptr -> do
---         let size = fromIntegral $ length elements * sizeOf (head elements)
---         bufferData ElementArrayBuffer $= (size, ptr, StaticDraw)
--- 
---     -- let pos = AttribLocation 0
---     -- vertexAttribPointer pos $= (ToFloat, VertexArrayDescriptor 2 Float (4*4) (bufferOffset 0))
---     -- vertexAttribArray pos $= Enabled
--- 
---     let pos = 0
---     glVertexAttribPointer pos 2 GL_FLOAT GL_FALSE 16 $ bufferOffset 0
---     glEnableVertexAttribArray pos
--- 
---     let tex = 1
---     glVertexAttribPointer tex 2 GL_FLOAT GL_FALSE 16 $ bufferOffset 8
---     glEnableVertexAttribArray tex
---     return text_vao
 
-type Vec3 a = (a, a, a)
-type Vec4 a = (a, a, a, a)
+instance Storable PCFGlyph where
+    sizeOf _ = 3 * 4
+    alignment _ = 4
+    peek p = undefined
+    poke p PCFGlyph{..} = do
+        poke p 
+        return $ advancePtr p 12
+    
 
--- String input contains no line breaks
-textVertices :: TextureAtlas -> String -> Maybe [Vec4 (Vec3 GLfloat)]
-textVertices atlas "" = Nothing
-textVertices atlas str = do
-    (atlas_offsets, glyphs) <- unzip <$> mapM (`M.lookup` textureAtlasMap atlas) str
-    let xs = map fromIntegral $ foldl' (\(x:xs) g -> (x + glyph_width g):x:xs) [0] glyphs
-        hs = map (fromIntegral . glyph_height) glyphs
-        ws = map (fromIntegral . glyph_width) glyphs
-    return $ zipWith4 charVertices xs hs ws $ map fromIntegral atlas_offsets
-    where
-        -- charVertices :: Int -> Char -> [(GLfloat, GLfloat, GLfloat, GLfloat)]
-        charVertices :: GLfloat -> GLfloat -> GLfloat -> GLfloat -> Vec4 (Vec3 GLfloat)
-        charVertices x height width offset =
-            let top_left = (x, 0, offset)
-                bot_left = (x, height, offset)
-                bot_right = (x + width, height, offset + width)
-                top_right = (x + width, 0, offset + width)
-            in (top_left, bot_left, bot_right, top_right)
+-- -- String input contains no line breaks
+
+-- Rendering as triangle strip
+bufferTextVertices :: TextureAtlas -> String -> IO ()
+bufferTextVertices atlas str = do
+    let (atlas_offsets, glyphs) = unzip $ mapMaybe (`M.lookup` textureAtlasMap atlas) str
+        xs = foldl' (\(x:xs) g -> (x + glyph_width g):x:xs) [0] glyphs
+        buf_size = length str * 12
+    allocaArray buf_size $ \buf -> do
+        let f (p, (PCFGlyph{..}, pre_ox, pre_ax)) = do
+            let ox = fromIntegral pre_ox
+                ax = fromIntegral pre_ax
+                height = fromIntegral glyph_height
+                width = fromIntegral glyph_width
+                ox' = ox + width
+                ax' = ax + width
+            -- Top left vertex
+            pokeElemOff p 0 ox      -- x offset (output)
+            pokeElemOff p 1 0       -- y offset (output & atlas)
+            pokeElemOff p 2 ax      -- x offset (atlas)
+            -- Bottom left vertex
+            pokeElemOff p 3 ox      -- x offset (output)
+            pokeElemOff p 4 height  -- y offset (output & atlas)
+            pokeElemOff p 5 ax      -- x offset (atlas)
+            -- Bottom right vertex
+            pokeElemOff p 6 ox'     -- x offset (output)
+            pokeElemOff p 7 height  -- y offset (output & atlas)
+            pokeElemOff p 8 ax'     -- x offset (atlas)
+            -- Top right vertex
+            pokeElemOff p 9  ox'    -- x offset (output)
+            pokeElemOff p 10 0      -- y offset (output & atlas)
+            pokeElemOff p 11 ax'    -- x offset (atlas)
+            return $ advancePtr p 12
+        foldM f buf (zip3 glyphs xs atlas_offsets)
+        glBufferData GL_ARRAY_BUFFER buf_size (castPtr buf) GL_STATIC_DRAW
