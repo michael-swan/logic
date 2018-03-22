@@ -1,12 +1,14 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 module Main where
 
 import Graphics.UI.WX hiding ((#), JoinMiter)
 import Graphics.UI.WXCore hiding ((#), JoinMiter, Image, GL_RGBA)
 import qualified Graphics.UI.WXCore as WXCore
 import Control.Monad.IO.Class
+import Control.Monad
 import qualified Graphics.UI.WX as WX
 import Control.Concurrent
 import qualified Data.ByteString as BS
@@ -38,6 +40,7 @@ import Graphics.GL.Core32
 import Graphics.GL.Types
 import Data.ByteString.Unsafe
 import Data.Maybe
+import GL
 
 main :: IO ()
 main = start $ do
@@ -61,9 +64,10 @@ main = start $ do
     opengl_context <- glContextCreateFromNull opengl_canvas
     glContextSetCurrent opengl_context opengl_canvas
     -- Initialize OpenGL vertex array objects (VAO's), buffer objects (BO's), uniforms, and shader programs
-    (vao, vao_lines) <- createShaderBuffers
+    (vao, vao_text, vao_lines, tex_atlas) <- createShaderBuffers
     Right (ShaderPrograms shader_program shader_program_lines shader_program_text) <- compileShaderPrograms
     transform_uniform <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program
+    transform_uniform_text <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_text
     transform_uniform_lines <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_lines
     orthoMatrix <- newArray [ 1, 0, 0, 0
                             , 0, 1, 0, 0
@@ -74,7 +78,7 @@ main = start $ do
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
     -- Setup OpenGL canvas event handlers
     state <- initCanvasData
-    WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines orthoMatrix
+    WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_text shader_program_lines vao vao_text vao_lines transform_uniform transform_uniform_text transform_uniform_lines orthoMatrix tex_atlas
                          , on click       := runCanvas state . canvasClick
                          , on unclick     := runCanvas state . canvasUnclick
                          , on doubleClick := runCanvas state . canvasDoubleClick
@@ -120,7 +124,7 @@ newTextureAtlas !(PCFText gs w h !font_img) = do
     glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_NEAREST
     -- Generate texture atlas map
     -- let atlas_map = M.fromList $ snd $ foldl' (\(p, xs) g -> (p+glyph_width g, (glyph_char g, (p, g)):xs)) (0, []) gs
-    let atlas_map = M.fromList $ zip (map glyph_char gs) $ zip (foldl' (\(x:xs) g -> (x + glyph_width g):x:xs) [0] gs) gs
+    let atlas_map = M.fromList $ zip (map glyph_char gs) $ zip (reverse $ foldl' (\(x:xs) g -> (x + glyph_width g):x:xs) [0] gs) gs
     return $ TextureAtlas texture_object atlas_map w h
 
 floatsToBytes :: [Float] -> BS.ByteString
@@ -132,7 +136,7 @@ uintToBytes = BSL.toStrict . runPut . mapM_ putWord32le
 bufferOffset :: Integral a => a -> Ptr b
 bufferOffset = plusPtr nullPtr . fromIntegral
 
-createShaderBuffers :: IO (GLuint, GLuint)
+createShaderBuffers :: IO (GLuint, GLuint, GLuint, TextureAtlas)
 createShaderBuffers = do
     -- Allocate VAO's and BO's
     [boxes, text, lines] <- allocaArray 3 $ \vaos -> do
@@ -173,7 +177,7 @@ createShaderBuffers = do
     atlas_obj <- newTextureAtlas =<< gohuFont
     glBindVertexArray text
     glBindBuffer GL_ARRAY_BUFFER textArray
-    bufferTextVertices atlas_obj "Fuck"
+    bufferTextVertices atlas_obj "Abcd"
 
     flip mapM [0, 1, 2] $ \i -> do
         glVertexAttribPointer i 1 GL_FLOAT GL_FALSE 12 $ bufferOffset (i*4)
@@ -194,10 +198,10 @@ createShaderBuffers = do
     glVertexAttribPointer pos 2 GL_FLOAT GL_FALSE 0 $ bufferOffset 0
     glEnableVertexAttribArray pos
 
-    return (boxes, lines)
+    return (boxes, text, lines, atlas_obj)
 
-canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> GLuint -> GLuint -> GLuint -> GLuint -> GLint -> GLint -> Ptr GLfloat -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
-canvasPaint canvas_state canvas context shader_program shader_program_lines vao vao_lines transform_uniform transform_uniform_lines orthoMatrix _ (WX.Rect _ _ w h) _ = runCanvas canvas_state $ do
+canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> GLuint -> GLuint -> GLuint -> GLuint -> GLuint -> GLuint -> GLint -> GLint -> GLint -> Ptr GLfloat -> TextureAtlas -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
+canvasPaint canvas_state canvas context shader_program shader_program_text shader_program_lines vao vao_text vao_lines transform_uniform transform_uniform_text transform_uniform_lines orthoMatrix tex_atlas _ (WX.Rect _ _ w h) _ = runCanvas canvas_state $ do
     -- Adjust viewport size
     glViewport 0 0 (fromIntegral w) (fromIntegral h)
     -- Clear screen and fill with background color
@@ -217,29 +221,32 @@ canvasPaint canvas_state canvas context shader_program shader_program_lines vao 
         pokeElemOff orthoMatrix 3 (diff_x / w')
         pokeElemOff orthoMatrix 5 (1 / h')
         pokeElemOff orthoMatrix 7 (diff_y / h')
-    -- Render text
+    -- Render boxes
     glUseProgram shader_program
     glUniformMatrix4fv transform_uniform 1 GL_TRUE orthoMatrix
     glBindVertexArray vao
-    glDrawElements GL_TRIANGLES 6 GL_UNSIGNED_INT nullPtr
+    -- glDrawElements GL_TRIANGLES 6 GL_UNSIGNED_INT nullPtr
+    -- Render text
+    glUseProgram shader_program_text
+    transform_atlas_height <- liftIO $ unsafeUseAsCString "atlas_height" $ glGetUniformLocation shader_program_text
+    transform_atlas_width <- liftIO $ unsafeUseAsCString "atlas_width" $ glGetUniformLocation shader_program_text
+    -- liftIO $ print $ textureAtlasHeight tex_atlas
+    -- liftIO $ print $ textureAtlasWidth tex_atlas
+    glUniformMatrix4fv transform_uniform_text 1 GL_TRUE orthoMatrix
+    glUniform1f transform_atlas_height $ fromIntegral $ textureAtlasHeight tex_atlas
+    glUniform1f transform_atlas_width $ fromIntegral $ textureAtlasWidth tex_atlas
+    glBindVertexArray vao_text
+    glDrawArrays GL_TRIANGLES 0 (6*4) -- GL_UNSIGNED_INT nullPtr
+    -- liftIO . print =<< getErrors
     -- Render lines
     glUseProgram shader_program_lines
     glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE orthoMatrix
     glBindVertexArray vao_lines
-    glDrawArrays GL_LINE_STRIP 0 3
+    -- glDrawArrays GL_LINE_STRIP 0 3
     -- Swap framebuffers
     liftIO $ glCanvasSwapBuffers canvas
     return ()
 
-
-instance Storable PCFGlyph where
-    sizeOf _ = 3 * 4
-    alignment _ = 4
-    peek p = undefined
-    poke p PCFGlyph{..} = do
-        poke p 
-        return $ advancePtr p 12
-    
 
 -- -- String input contains no line breaks
 
@@ -247,32 +254,47 @@ instance Storable PCFGlyph where
 bufferTextVertices :: TextureAtlas -> String -> IO ()
 bufferTextVertices atlas str = do
     let (atlas_offsets, glyphs) = unzip $ mapMaybe (`M.lookup` textureAtlasMap atlas) str
-        xs = foldl' (\(x:xs) g -> (x + glyph_width g):x:xs) [0] glyphs
-        buf_size = length str * 12
-    allocaArray buf_size $ \buf -> do
-        let f (p, (PCFGlyph{..}, pre_ox, pre_ax)) = do
-            let ox = fromIntegral pre_ox
-                ax = fromIntegral pre_ax
-                height = fromIntegral glyph_height
-                width = fromIntegral glyph_width
-                ox' = ox + width
-                ax' = ax + width
-            -- Top left vertex
-            pokeElemOff p 0 ox      -- x offset (output)
-            pokeElemOff p 1 0       -- y offset (output & atlas)
-            pokeElemOff p 2 ax      -- x offset (atlas)
-            -- Bottom left vertex
-            pokeElemOff p 3 ox      -- x offset (output)
-            pokeElemOff p 4 height  -- y offset (output & atlas)
-            pokeElemOff p 5 ax      -- x offset (atlas)
-            -- Bottom right vertex
-            pokeElemOff p 6 ox'     -- x offset (output)
-            pokeElemOff p 7 height  -- y offset (output & atlas)
-            pokeElemOff p 8 ax'     -- x offset (atlas)
-            -- Top right vertex
-            pokeElemOff p 9  ox'    -- x offset (output)
-            pokeElemOff p 10 0      -- y offset (output & atlas)
-            pokeElemOff p 11 ax'    -- x offset (atlas)
-            return $ advancePtr p 12
+        xs = reverse $ foldl' (\(x:xs) g -> (x + glyph_width g):x:xs) [0] glyphs
+        buf_size = length str * 18 * sizeOf (undefined :: GLfloat)
+    allocaBytes buf_size $ \buf -> do
+        let f p (PCFGlyph{..}, pre_ox, pre_ax) = do
+                let ox = fromIntegral pre_ox :: GLfloat
+                    ax = fromIntegral pre_ax
+                    height = fromIntegral glyph_height
+                    width = fromIntegral glyph_width
+                    ox' = ox + width
+                    ax' = ax + width
+                -- Top left vertex
+                pokeElemOff p 0 ox      -- x offset (output)
+                pokeElemOff p 1 0       -- y offset (output & atlas)
+                pokeElemOff p 2 ax      -- x offset (atlas)
+                -- Bottom left vertex
+                pokeElemOff p 3 ox      -- x offset (output)
+                pokeElemOff p 4 height  -- y offset (output & atlas)
+                pokeElemOff p 5 ax      -- x offset (atlas)
+                -- Bottom right vertex
+                pokeElemOff p 6 ox'     -- x offset (output)
+                pokeElemOff p 7 height  -- y offset (output & atlas)
+                pokeElemOff p 8 ax'     -- x offset (atlas)
+
+                -- Bottom right vertex
+                pokeElemOff p 9  ox'     -- x offset (output)
+                pokeElemOff p 10 height  -- y offset (output & atlas)
+                pokeElemOff p 11 ax'     -- x offset (atlas)
+                -- Top right vertex
+                pokeElemOff p 12 ox'     -- x offset (output)
+                pokeElemOff p 13 0       -- y offset (output & atlas)
+                pokeElemOff p 14 ax'     -- x offset (atlas)
+                -- Top left vertex
+                pokeElemOff p 15 ox      -- x offset (output)
+                pokeElemOff p 16 0       -- y offset (output & atlas)
+                pokeElemOff p 17 ax      -- x offset (atlas)
+
+                print (ox, ox', p)
+                print (ax, ax', height)
+                return $ advancePtr p 18
         foldM f buf (zip3 glyphs xs atlas_offsets)
-        glBufferData GL_ARRAY_BUFFER buf_size (castPtr buf) GL_STATIC_DRAW
+        -- print buf_size
+        -- print $ last xs
+        print (xs, atlas_offsets)
+        glBufferData GL_ARRAY_BUFFER (fromIntegral buf_size) (castPtr buf) GL_STATIC_DRAW

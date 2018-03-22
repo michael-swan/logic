@@ -129,35 +129,30 @@ void main()
 
 textVertexShader :: ByteString
 textVertexShader = [r|
-#version 300 es
-precision highp float;
+#version 330
 in float ox;
 in float y;
 in float ax;
-out float out_y;
-out float out_ax;
+out vec2 frag_ax_y;
 uniform mat4 transform;
 uniform float atlas_height;
 uniform float atlas_width;
 void main()
 {
-    out_y = y / atlas_height;
-    out_ax = ax / atlas_width;
-    gl_Position = transform * vec4(ox, y, 0.0, 1.0);
+    frag_ax_y = vec2(ax / atlas_width, y / atlas_height);
+    gl_Position = transform * vec4(ox + 0.25, -y + 0.25, 0.0, 1.0);
 }
 |]
 
 textFragmentShader :: ByteString
 textFragmentShader = [r|
-#version 300 es
-precision highp float;
-in float y;
-in float ax;
+#version 330
+in vec2 frag_ax_y;
 out vec4 outColor;
 uniform sampler2D texture_atlas;
 void main()
 {
-    outColor = texture(texture_atlas, vec2(ax, y));
+    outColor = texture(texture_atlas, frag_ax_y); // vec4(frag_ax_y, 0.0, 1.0); 
 }
 |]
 
