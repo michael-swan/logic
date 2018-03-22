@@ -1,8 +1,10 @@
 module Canvas.Event
-  ( canvasClick
-  , canvasDoubleClick
-  , canvasUnclick
-  , canvasDrag ) where
+    ( canvasClick
+    , canvasDoubleClick
+    , canvasUnclick
+    , canvasDrag
+    , canvasAnyKey
+    , canvasAnyKey' ) where
 
 import Canvas.Monad
 import Control.Monad.IO.Class
@@ -27,7 +29,24 @@ canvasUnclick (Point ax ay) = do
   setMousePoint      $ Point 0 0
   setMouseClickPoint $ Point 0 0
 
-canvasDrag :: GLCanvas () -> Point -> Canvas ()
-canvasDrag opengl_canvas x = do
+canvasDrag :: Point -> Canvas ()
+canvasDrag x = do
   setMousePoint x
-  liftIO $ repaint opengl_canvas
+  canvasRepaint
+
+canvasAnyKey :: EventKey -> Canvas ()
+canvasAnyKey (EventKey key _ _) =  canvasAnyKey' key
+
+canvasAnyKey' :: Key -> Canvas ()
+canvasAnyKey' (KeyChar c) = getTextBuffer >>= setTextBuffer . (++ [c]) >> canvasRepaint
+canvasAnyKey' KeyReturn   = canvasAnyKey' (KeyChar '\n')
+canvasAnyKey' KeySpace    = canvasAnyKey' (KeyChar ' ')
+canvasAnyKey' KeyBack     = do
+    text_buffer <- getTextBuffer
+    case text_buffer of
+      "" ->  return ()
+      _ -> setTextBuffer (init text_buffer) >> canvasRepaint
+canvasAnyKey' _           = return ()
+
+canvasRepaint :: Canvas ()
+canvasRepaint = getGLCanvas >>= liftIO . repaint

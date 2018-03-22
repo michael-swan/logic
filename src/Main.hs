@@ -77,13 +77,14 @@ main = start $ do
     glEnable GL_BLEND
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
     -- Setup OpenGL canvas event handlers
-    state <- initCanvasData
+    state <- initCanvasData opengl_canvas
+    WX.set main_panel [ on keyboard := runCanvas state . canvasAnyKey ]
     WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_text shader_program_lines vao vao_text vao_lines transform_uniform transform_uniform_text transform_uniform_lines orthoMatrix tex_atlas
                          , on click       := runCanvas state . canvasClick
                          , on unclick     := runCanvas state . canvasUnclick
                          , on doubleClick := runCanvas state . canvasDoubleClick
-                         , on drag        := runCanvas state . canvasDrag opengl_canvas ]
-    WX.set main_window [menuBar := [menu_bar]
+                         , on drag        := runCanvas state . canvasDrag ]
+    WX.set main_window [ menuBar := [menu_bar]
                        , statusBar := [status_bar]
                        , layout := container main_panel $ WX.fill $
                                      vsplit main_split 4 300
@@ -179,10 +180,6 @@ createShaderBuffers = do
     glBindBuffer GL_ARRAY_BUFFER textArray
     bufferTextVertices atlas_obj "Abcd"
 
-    flip mapM [0, 1, 2] $ \i -> do
-        glVertexAttribPointer i 1 GL_FLOAT GL_FALSE 12 $ bufferOffset (i*4)
-        glEnableVertexAttribArray i
-
     -- LINES --
     glBindVertexArray lines
     glBindBuffer GL_ARRAY_BUFFER arrayBuffer'
@@ -236,7 +233,10 @@ canvasPaint canvas_state canvas context shader_program shader_program_text shade
     glUniform1f transform_atlas_height $ fromIntegral $ textureAtlasHeight tex_atlas
     glUniform1f transform_atlas_width $ fromIntegral $ textureAtlasWidth tex_atlas
     glBindVertexArray vao_text
-    glDrawArrays GL_TRIANGLES 0 (6*4) -- GL_UNSIGNED_INT nullPtr
+    -- glBindBuffer GL_ARRAY_BUFFER textArray
+    text_buffer <- getTextBuffer
+    liftIO $ bufferTextVertices tex_atlas text_buffer
+    glDrawArrays GL_TRIANGLES 0 $ 6 * fromIntegral (length text_buffer) -- GL_UNSIGNED_INT nullPtr
     -- liftIO . print =<< getErrors
     -- Render lines
     glUseProgram shader_program_lines
@@ -290,11 +290,9 @@ bufferTextVertices atlas str = do
                 pokeElemOff p 16 0       -- y offset (output & atlas)
                 pokeElemOff p 17 ax      -- x offset (atlas)
 
-                print (ox, ox', p)
-                print (ax, ax', height)
                 return $ advancePtr p 18
         foldM f buf (zip3 glyphs xs atlas_offsets)
-        -- print buf_size
-        -- print $ last xs
-        print (xs, atlas_offsets)
         glBufferData GL_ARRAY_BUFFER (fromIntegral buf_size) (castPtr buf) GL_STATIC_DRAW
+    flip mapM_ [0, 1, 2] $ \i -> do
+        glVertexAttribPointer i 1 GL_FLOAT GL_FALSE 12 $ bufferOffset (i*4)
+        glEnableVertexAttribArray i
