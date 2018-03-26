@@ -54,5 +54,9 @@ canvasAnyKey' KeyBack     = do
     text_buffer <- getTextBuffer
     case text_buffer of
       "" ->  return ()
-      _ -> setTextBuffer (init text_buffer) >> canvasRepaint
+      _ -> do
+            resetCaretBlinkTimer
+            setCaretVisible True
+            setTextBuffer (init text_buffer)
+            canvasRepaint
 canvasAnyKey' _           = return ()
