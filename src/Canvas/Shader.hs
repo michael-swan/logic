@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings, QuasiQuotes #-}
 module Canvas.Shader
     ( ShaderPrograms(..)
+    , ShaderProgram(..)
     , compileShaderPrograms ) where
 
 import Text.RawString.QQ
@@ -19,21 +20,27 @@ import Foreign.Marshal.Alloc
 import Foreign.C.String
 import GL
 
-data ShaderPrograms = ShaderPrograms { shader_default :: GLuint
-                                     , shader_lines :: GLuint
-                                     , shader_text :: GLuint }
+data ShaderPrograms = ShaderPrograms { shader_cursor :: ShaderProgram (GLint, GLint) GLint
+                                     , shader_text :: ShaderProgram (GLint, GLint, GLint) (GLint, GLint, GLint) }
+
+data ShaderProgram us as = ShaderProgram { shader_program_id :: GLuint
+                                         , shader_program_uniforms :: us
+                                         , shader_program_attributes :: as }
 
 compileShaderPrograms :: IO (Either [String] ShaderPrograms)
 compileShaderPrograms = runExceptT $
-    ShaderPrograms <$> compileShaderProgram defaultVertexShader defaultFragmentShader ["position", "texcoord"]
-                   <*> compileShaderProgram lineVertexShader lineFragmentShader ["position", "texcoord"]
-                   <*> compileShaderProgram textVertexShader textFragmentShader ["ox", "y", "ax"]
+    ShaderPrograms <$> compileShaderProgram cursorVertexShader cursorFragmentShader ["transform", "cursor_position"] ["position"] (\[t, cp] -> (t, cp)) (\[p] -> p)
+                   <*> compileShaderProgram textVertexShader textFragmentShader ["transform", "atlas_height", "atlas_width"] ["ox", "y", "ax"] (\[t, h, w] -> (t, h, w)) (\[ox, y, ax] -> (ox, y, ax))
 
-compileShaderProgram :: ByteString -> ByteString -> [ByteString] -> ExceptT [String] IO GLuint
-compileShaderProgram vs_source fs_source attrs = do
+compileShaderProgram :: ByteString -> ByteString -> [ByteString] -> [ByteString] -> ([GLint] -> us) -> ([GLint] -> as) -> ExceptT [String] IO (ShaderProgram us as)
+compileShaderProgram vs_source fs_source uniforms attrs mkUniforms mkAttrs = do
     vs <- makeShader GL_VERTEX_SHADER vs_source
     fs <- makeShader GL_FRAGMENT_SHADER fs_source
-    makeProgram [vs, fs] $ zip attrs [0..]
+    program <- makeProgram [vs, fs] $ zip attrs [0..]
+    liftIO $ do
+        us <- mapM (\s -> unsafeUseAsCString s $ glGetUniformLocation program) uniforms
+        as <- mapM (\s -> unsafeUseAsCString s $ glGetAttribLocation program) attrs
+        return $ ShaderProgram program (mkUniforms us) (mkAttrs as)
 
 makeShader :: GLenum -> ByteString -> ExceptT [String] IO GLuint
 makeShader shader_type shader_source = do
@@ -59,7 +66,7 @@ makeProgram shaders attributes = do
     program <- glCreateProgram
     mapM_ (glAttachShader program) shaders
     liftIO $ do
-        mapM_ (\(name, loc) -> unsafeUseAsCString name $ glBindAttribLocation program loc) attributes
+        -- mapM_ (\(name, loc) -> unsafeUseAsCString name $ glBindAttribLocation program loc) attributes
         unsafeUseAsCString "outColor" $ glBindFragDataLocation program 0
     glLinkProgram program
     glValidateProgram program
@@ -76,54 +83,25 @@ makeProgram shaders attributes = do
     else
         return program
 
-defaultVertexShader :: ByteString
-defaultVertexShader = [r|
-#version 300 es
-precision highp float;
-in vec2 position;
-in vec2 texcoord;
-out vec2 Texcoord;
-uniform mat4 transform;
-void main()
-{
-    Texcoord = texcoord;
-    gl_Position = transform * vec4(position, 0.0, 1.0);
-}
-|]
-
-defaultFragmentShader :: ByteString
-defaultFragmentShader = [r|
-#version 300 es
-precision highp float;
-in vec2 Texcoord;
-out vec4 outColor;
-uniform sampler2D tex;
-void main()
-{
-    outColor = texture(tex, Texcoord);
-}
-|]
-
-lineVertexShader :: ByteString
-lineVertexShader = [r|
-#version 300 es
-precision highp float;
+cursorVertexShader :: ByteString
+cursorVertexShader = [r|
+#version 330
 in vec2 position;
 uniform mat4 transform;
+uniform vec2 cursor_position;
 void main()
 {
-    gl_Position = transform * vec4(position, 1.0, 1.0);
+    gl_Position = transform * vec4(position + cursor_position + vec2(1.0, 1.0), 0.0, 1.0);
 }
 |]
 
-lineFragmentShader :: ByteString
-lineFragmentShader = [r|
-#version 300 es
-precision highp float;
+cursorFragmentShader :: ByteString
+cursorFragmentShader = [r|
+#version 330
 out vec4 outColor;
 void main()
 {
-    outColor = vec4(1.0, 0.0, 0.0, 1.0);
+    outColor = vec4(0.0, 0.0, 0.0, 1.0);
 }
 |]
 

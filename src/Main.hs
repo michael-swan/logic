@@ -41,6 +41,7 @@ import Graphics.GL.Types
 import Data.ByteString.Unsafe
 import Data.Maybe
 import GL
+import Control.Monad.Fix
 
 main :: IO ()
 main = start $ do
@@ -60,15 +61,12 @@ main = start $ do
     listViewSetItems list [("sub_400000", 1234), ("main", 5678)]
     WX.set (listViewCtrl list) [style := wxLC_VRULES .|. wxLC_HRULES .|. wxLC_REPORT]
     -- Setup OpenGL canvas
-    opengl_canvas <- glCanvasCreateEx main_split 0 (Rect 0 0 800 600) 0 "GLCanvas" [WXCore.GL_RGBA, GL_CORE_PROFILE, WXCore.GL_MAJOR_VERSION 4, WXCore.GL_MINOR_VERSION 3] nullPalette
+    opengl_canvas <- glCanvasCreateEx main_split 0 (Rect 0 0 800 600) 0 "GLCanvas" [WXCore.GL_RGBA, GL_CORE_PROFILE, WXCore.GL_MAJOR_VERSION 3, WXCore.GL_MINOR_VERSION 2] nullPalette
     opengl_context <- glContextCreateFromNull opengl_canvas
     glContextSetCurrent opengl_context opengl_canvas
     -- Initialize OpenGL vertex array objects (VAO's), buffer objects (BO's), uniforms, and shader programs
-    (vao, vao_text, vao_lines, tex_atlas) <- createShaderBuffers
-    Right (ShaderPrograms shader_program shader_program_lines shader_program_text) <- compileShaderPrograms
-    transform_uniform <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program
-    transform_uniform_text <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_text
-    transform_uniform_lines <- unsafeUseAsCString "transform" $ glGetUniformLocation shader_program_lines
+    (vao, vao_text, vao_lines, tex_atlas, textArray) <- createShaderBuffers
+    Right shader_programs <- compileShaderPrograms
     orthoMatrix <- newArray [ 1, 0, 0, 0
                             , 0, 1, 0, 0
                             , 0, 0, 1, 0
@@ -76,14 +74,18 @@ main = start $ do
     -- Configure blending
     glEnable GL_BLEND
     glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    -- Setup OpenGL canvas event handlers
-    state <- initCanvasData opengl_canvas
-    WX.set main_panel [ on keyboard := runCanvas state . canvasAnyKey ]
-    WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_program shader_program_text shader_program_lines vao vao_text vao_lines transform_uniform transform_uniform_text transform_uniform_lines orthoMatrix tex_atlas
-                         , on click       := runCanvas state . canvasClick
-                         , on unclick     := runCanvas state . canvasUnclick
-                         , on doubleClick := runCanvas state . canvasDoubleClick
-                         , on drag        := runCanvas state . canvasDrag ]
+    -- OpenGL event handlers must be configured before timer in canvas data can be initialized, otherwise wxHaskell exception
+    mfix $ \state -> do
+        -- Setup OpenGL canvas event handlers
+        WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_programs vao vao_text vao_lines orthoMatrix tex_atlas textArray
+                             , on click       := runCanvas state . canvasClick
+                             , on unclick     := runCanvas state . canvasUnclick
+                             , on doubleClick := runCanvas state . canvasDoubleClick
+                             , on drag        := runCanvas state . canvasDrag]
+        -- Setup keyboard input handler
+        WX.set main_panel [ on keyboard := runCanvas state . canvasAnyKey ]
+        -- Initialize canvas state
+        initCanvasData opengl_canvas
     WX.set main_window [ menuBar := [menu_bar]
                        , statusBar := [status_bar]
                        , layout := container main_panel $ WX.fill $
@@ -137,7 +139,7 @@ uintToBytes = BSL.toStrict . runPut . mapM_ putWord32le
 bufferOffset :: Integral a => a -> Ptr b
 bufferOffset = plusPtr nullPtr . fromIntegral
 
-createShaderBuffers :: IO (GLuint, GLuint, GLuint, TextureAtlas)
+createShaderBuffers :: IO (GLuint, GLuint, GLuint, TextureAtlas, GLuint)
 createShaderBuffers = do
     -- Allocate VAO's and BO's
     [boxes, text, lines] <- allocaArray 3 $ \vaos -> do
@@ -184,21 +186,21 @@ createShaderBuffers = do
     glBindVertexArray lines
     glBindBuffer GL_ARRAY_BUFFER arrayBuffer'
 
-    let vertices = [ 0, 0
-                   , 50, 100
-                   , 100, 100 ] :: [GLfloat]
+    let vertices = [ 0, 0, 0, -13, 20, 20 ] :: [GLfloat]
     withArray vertices $ \ptr -> do
         let size = fromIntegral $ length vertices * sizeOf (head vertices)
         glBufferData GL_ARRAY_BUFFER size (castPtr ptr) GL_STATIC_DRAW
 
     let pos = 0
-    glVertexAttribPointer pos 2 GL_FLOAT GL_FALSE 0 $ bufferOffset 0
+    glVertexAttribPointer pos 2 GL_FLOAT GL_FALSE 8 $ bufferOffset 0
     glEnableVertexAttribArray pos
+    glBindVertexArray 0
+    -- glBindBuffer GL_ARRAY_BUFFER 0
 
-    return (boxes, text, lines, atlas_obj)
+    return (boxes, text, lines, atlas_obj, textArray)
 
-canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> GLuint -> GLuint -> GLuint -> GLuint -> GLuint -> GLuint -> GLint -> GLint -> GLint -> Ptr GLfloat -> TextureAtlas -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
-canvasPaint canvas_state canvas context shader_program shader_program_text shader_program_lines vao vao_text vao_lines transform_uniform transform_uniform_text transform_uniform_lines orthoMatrix tex_atlas _ (WX.Rect _ _ w h) _ = runCanvas canvas_state $ do
+canvasPaint :: MVar CanvasData -> GLCanvas a -> GLContext a -> ShaderPrograms -> GLuint -> GLuint -> GLuint -> Ptr GLfloat -> TextureAtlas -> GLuint -> DC c -> WX.Rect -> [WX.Rect] -> IO ()
+canvasPaint canvas_state canvas context ShaderPrograms{..} vao vao_text vao_lines orthoMatrix tex_atlas textArray _ (WX.Rect _ _ w h) _ = runCanvas canvas_state $ do
     -- Adjust viewport size
     glViewport 0 0 (fromIntegral w) (fromIntegral h)
     -- Clear screen and fill with background color
@@ -219,30 +221,39 @@ canvasPaint canvas_state canvas context shader_program shader_program_text shade
         pokeElemOff orthoMatrix 5 (1 / h')
         pokeElemOff orthoMatrix 7 (diff_y / h')
     -- Render boxes
-    glUseProgram shader_program
-    glUniformMatrix4fv transform_uniform 1 GL_TRUE orthoMatrix
-    glBindVertexArray vao
+    -- glUseProgram shader_program
+    -- glUniformMatrix4fv transform_uniform 1 GL_TRUE orthoMatrix
+    -- glBindVertexArray vao
     -- glDrawElements GL_TRIANGLES 6 GL_UNSIGNED_INT nullPtr
     -- Render text
-    glUseProgram shader_program_text
-    transform_atlas_height <- liftIO $ unsafeUseAsCString "atlas_height" $ glGetUniformLocation shader_program_text
-    transform_atlas_width <- liftIO $ unsafeUseAsCString "atlas_width" $ glGetUniformLocation shader_program_text
-    -- liftIO $ print $ textureAtlasHeight tex_atlas
-    -- liftIO $ print $ textureAtlasWidth tex_atlas
-    glUniformMatrix4fv transform_uniform_text 1 GL_TRUE orthoMatrix
-    glUniform1f transform_atlas_height $ fromIntegral $ textureAtlasHeight tex_atlas
-    glUniform1f transform_atlas_width $ fromIntegral $ textureAtlasWidth tex_atlas
+    glUseProgram $ shader_program_id shader_text
+    let (uniform_transform, uniform_atlas_height, uniform_atlas_width) = shader_program_uniforms shader_text
+    glUniformMatrix4fv uniform_transform 1 GL_TRUE orthoMatrix
+    glUniform1f uniform_atlas_height $ fromIntegral $ textureAtlasHeight tex_atlas
+    glUniform1f uniform_atlas_width $ fromIntegral $ textureAtlasWidth tex_atlas
     glBindVertexArray vao_text
     -- glBindBuffer GL_ARRAY_BUFFER textArray
     text_buffer <- getTextBuffer
+    glBindBuffer GL_ARRAY_BUFFER textArray
     liftIO $ bufferTextVertices tex_atlas text_buffer
     glDrawArrays GL_TRIANGLES 0 $ 6 * fromIntegral (length text_buffer) -- GL_UNSIGNED_INT nullPtr
-    -- liftIO . print =<< getErrors
+    glBindVertexArray 0
+    glBindBuffer GL_ARRAY_BUFFER 0
     -- Render lines
-    glUseProgram shader_program_lines
-    glUniformMatrix4fv transform_uniform_lines 1 GL_TRUE orthoMatrix
-    glBindVertexArray vao_lines
-    -- glDrawArrays GL_LINE_STRIP 0 3
+    caret_visible <- getCaretVisible
+    if caret_visible then do
+        glUseProgram $ shader_program_id shader_cursor
+        glBindVertexArray vao_lines
+        let (uniform_transform, uniform_cursor_position) = shader_program_uniforms shader_cursor
+        glUniformMatrix4fv uniform_transform 1 GL_TRUE orthoMatrix
+        -- uniform_pos <- liftIO $ unsafeUseAsCString "cursor_position" $ glGetUniformLocation shader_program_lines
+        -- uniform_font_size <- liftIO $ unsafeUseAsCString "font_size" $ glGetUniformLocation shader_program_lines
+        glUniform2f uniform_cursor_position (textWidth tex_atlas text_buffer) (fromIntegral 0)
+        -- glUniform1f uniform_font_size 13.0
+        glDrawArrays GL_LINE_STRIP 0 2
+        glBindVertexArray 0
+    else
+        return ()
     -- Swap framebuffers
     liftIO $ glCanvasSwapBuffers canvas
     return ()
@@ -296,3 +307,8 @@ bufferTextVertices atlas str = do
     flip mapM_ [0, 1, 2] $ \i -> do
         glVertexAttribPointer i 1 GL_FLOAT GL_FALSE 12 $ bufferOffset (i*4)
         glEnableVertexAttribArray i
+
+textWidth :: Num n => TextureAtlas -> String -> n
+textWidth atlas str =
+    let (atlas_offsets, glyphs) = unzip $ mapMaybe (`M.lookup` textureAtlasMap atlas) str
+    in fromIntegral $ sum $ map glyph_width glyphs
