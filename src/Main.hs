@@ -242,14 +242,14 @@ canvasPaint canvas_state canvas context ShaderPrograms{..} vao vao_text vao_line
     -- Render lines
     caret_visible <- getCaretVisible
     if caret_visible then do
-        glUseProgram $ shader_program_id shader_cursor
+        glUseProgram $ shader_program_id shader_caret
         glBindVertexArray vao_lines
-        let (uniform_transform, uniform_cursor_position) = shader_program_uniforms shader_cursor
+        let (uniform_transform, uniform_caret_position, uniform_font_size) = shader_program_uniforms shader_caret
         glUniformMatrix4fv uniform_transform 1 GL_TRUE orthoMatrix
         -- uniform_pos <- liftIO $ unsafeUseAsCString "cursor_position" $ glGetUniformLocation shader_program_lines
         -- uniform_font_size <- liftIO $ unsafeUseAsCString "font_size" $ glGetUniformLocation shader_program_lines
-        glUniform2f uniform_cursor_position (textWidth tex_atlas text_buffer) (fromIntegral 0)
-        -- glUniform1f uniform_font_size 13.0
+        glUniform2f uniform_caret_position (textWidth tex_atlas text_buffer) (fromIntegral 0)
+        glUniform1f uniform_font_size $ fromIntegral $ textureAtlasHeight tex_atlas
         glDrawArrays GL_LINE_STRIP 0 2
         glBindVertexArray 0
     else

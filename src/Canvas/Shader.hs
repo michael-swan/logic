@@ -20,7 +20,7 @@ import Foreign.Marshal.Alloc
 import Foreign.C.String
 import GL
 
-data ShaderPrograms = ShaderPrograms { shader_cursor :: ShaderProgram (GLint, GLint) GLint
+data ShaderPrograms = ShaderPrograms { shader_caret :: ShaderProgram (GLint, GLint, GLint) GLint
                                      , shader_text :: ShaderProgram (GLint, GLint, GLint) (GLint, GLint, GLint) }
 
 data ShaderProgram us as = ShaderProgram { shader_program_id :: GLuint
@@ -29,7 +29,7 @@ data ShaderProgram us as = ShaderProgram { shader_program_id :: GLuint
 
 compileShaderPrograms :: IO (Either [String] ShaderPrograms)
 compileShaderPrograms = runExceptT $
-    ShaderPrograms <$> compileShaderProgram cursorVertexShader cursorFragmentShader ["transform", "cursor_position"] ["position"] (\[t, cp] -> (t, cp)) (\[p] -> p)
+    ShaderPrograms <$> compileShaderProgram caretVertexShader caretFragmentShader ["transform", "caret_position", "font_size"] ["position"] (\[t, cp, fs] -> (t, cp, fs)) (\[p] -> p)
                    <*> compileShaderProgram textVertexShader textFragmentShader ["transform", "atlas_height", "atlas_width"] ["ox", "y", "ax"] (\[t, h, w] -> (t, h, w)) (\[ox, y, ax] -> (ox, y, ax))
 
 compileShaderProgram :: ByteString -> ByteString -> [ByteString] -> [ByteString] -> ([GLint] -> us) -> ([GLint] -> as) -> ExceptT [String] IO (ShaderProgram us as)
@@ -83,20 +83,21 @@ makeProgram shaders attributes = do
     else
         return program
 
-cursorVertexShader :: ByteString
-cursorVertexShader = [r|
+caretVertexShader :: ByteString
+caretVertexShader = [r|
 #version 330
 in vec2 position;
 uniform mat4 transform;
-uniform vec2 cursor_position;
+uniform vec2 caret_position;
+uniform float font_size;
 void main()
 {
     gl_Position = transform * vec4(position + cursor_position + vec2(1.0, 1.0), 0.0, 1.0);
 }
 |]
 
-cursorFragmentShader :: ByteString
-cursorFragmentShader = [r|
+caretFragmentShader :: ByteString
+caretFragmentShader = [r|
 #version 330
 out vec4 outColor;
 void main()
