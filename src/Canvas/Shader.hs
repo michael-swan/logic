@@ -92,7 +92,7 @@ uniform vec2 caret_position;
 uniform float font_size;
 void main()
 {
-    gl_Position = transform * vec4(position + cursor_position + vec2(1.0, 1.0), 0.0, 1.0);
+    gl_Position = transform * vec4(position + caret_position + vec2(1.0, 1.0), 0.0, 1.0);
 }
 |]
 

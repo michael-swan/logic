@@ -66,34 +66,39 @@ main = start $ do
     glContextSetCurrent opengl_context opengl_canvas
     -- Initialize OpenGL vertex array objects (VAO's), buffer objects (BO's), uniforms, and shader programs
     (vao, vao_text, vao_lines, tex_atlas, textArray) <- createShaderBuffers
-    Right shader_programs <- compileShaderPrograms
-    orthoMatrix <- newArray [ 1, 0, 0, 0
-                            , 0, 1, 0, 0
-                            , 0, 0, 1, 0
-                            , 0, 0, 0, 1 ]
-    -- Configure blending
-    glEnable GL_BLEND
-    glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
-    -- OpenGL event handlers must be configured before timer in canvas data can be initialized, otherwise wxHaskell exception
-    mfix $ \state -> do
-        -- Setup OpenGL canvas event handlers
-        WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_programs vao vao_text vao_lines orthoMatrix tex_atlas textArray
-                             , on click       := runCanvas state . canvasClick
-                             , on unclick     := runCanvas state . canvasUnclick
-                             , on doubleClick := runCanvas state . canvasDoubleClick
-                             , on drag        := runCanvas state . canvasDrag]
-        -- Setup keyboard input handler
-        WX.set main_panel [ on keyboard := runCanvas state . canvasAnyKey ]
-        -- Initialize canvas state
-        initCanvasData opengl_canvas
-    WX.set main_window [ menuBar := [menu_bar]
-                       , statusBar := [status_bar]
-                       , layout := container main_panel $ WX.fill $
-                                     vsplit main_split 4 300
-                                       -- Left Panel
-                                       (widget $ listViewCtrl list) -- quit)
-                                       -- Right Panel
-                                       (floatBottomRight $ widget opengl_canvas) ]
+    either_shader_programs <- compileShaderPrograms
+    case either_shader_programs of
+      Left errors -> do
+          errorDialog main_window "Failed to compiler shader program" $ concat errors
+          close main_window
+      Right shader_programs -> do
+        orthoMatrix <- newArray [ 1, 0, 0, 0
+                                , 0, 1, 0, 0
+                                , 0, 0, 1, 0
+                                , 0, 0, 0, 1 ]
+        -- Configure blending
+        glEnable GL_BLEND
+        glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+        -- OpenGL event handlers must be configured before timer in canvas data can be initialized, otherwise wxHaskell exception
+        mfix $ \state -> do
+            -- Setup OpenGL canvas event handlers
+            WX.set opengl_canvas [ on paintRaw    := canvasPaint state opengl_canvas opengl_context shader_programs vao vao_text vao_lines orthoMatrix tex_atlas textArray
+                                 , on click       := runCanvas state . canvasClick
+                                 , on unclick     := runCanvas state . canvasUnclick
+                                 , on doubleClick := runCanvas state . canvasDoubleClick
+                                 , on drag        := runCanvas state . canvasDrag]
+            -- Setup keyboard input handler
+            WX.set main_panel [ on keyboard := runCanvas state . canvasAnyKey ]
+            -- Initialize canvas state
+            initCanvasData opengl_canvas
+        WX.set main_window [ menuBar := [menu_bar]
+                           , statusBar := [status_bar]
+                           , layout := container main_panel $ WX.fill $
+                                         vsplit main_split 4 300
+                                           -- Left Panel
+                                           (widget $ listViewCtrl list) -- quit)
+                                           -- Right Panel
+                                           (floatBottomRight $ widget opengl_canvas) ]
 
 -- | Texture atlas of a monospaced font.
 data TextureAtlas = TextureAtlas { textureAtlasObject :: GLuint
